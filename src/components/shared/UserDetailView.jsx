@@ -91,6 +91,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
   const [notes, setNotes] = useState([])
   const [fraudData, setFraudData] = useState(null)
   const [habits, setHabits] = useState([])
+  const [customHabits, setCustomHabits] = useState([])
   const [replyText, setReplyText] = useState('')
   const [noteText, setNoteText] = useState('')
   const [deleteStep, setDeleteStep] = useState(0)
@@ -111,14 +112,15 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
     if (!user) return
     setLoading(true)
     try {
-      const [profileRes, rewardsRes, messagesRes, notesRes, fraudRes, habitsRes] = await Promise.all([
+      const [profileRes, rewardsRes, messagesRes, notesRes, fraudRes, habitsRes, customHabitsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('rewards').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(20),
         supabase.from('contact_messages').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
         supabase.from('admin_notes').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(20),
         supabase.from('fraud_risk_scores').select('*').eq('user_id', user.id).single(),
         supabase.from('habit_logs').select('*').eq('user_id', user.id)
-          .gte('logged_at', new Date(Date.now() - 86400000).toISOString()).order('logged_at', { ascending: false })
+          .gte('logged_at', new Date(Date.now() - 86400000).toISOString()).order('logged_at', { ascending: false }),
+        supabase.from('custom_habits').select('id, name, emoji, created_at, is_active').eq('user_id', user.id).order('created_at', { ascending: false })
       ])
       setUserDetails(profileRes.data || user)
       setRewards(rewardsRes.data || [])
@@ -126,6 +128,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       setNotes(notesRes.data || [])
       setFraudData(fraudRes.data || null)
       setHabits(habitsRes.data || [])
+      setCustomHabits(customHabitsRes.data || [])
     } catch {
       setUserDetails(user)
     } finally {
@@ -440,6 +443,50 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
                   ))}
                 </div>
                 <HabitHeatmap userId={u.id} C={C} />
+
+                <div style={{ marginTop: 24, paddingTop: 20, borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Custom Habits</div>
+                    <span style={{ fontSize: 11, fontWeight: 600, background: '#EFF6FF', color: '#3B82F6', padding: '1px 7px', borderRadius: 10 }}>
+                      {customHabits.length}
+                    </span>
+                  </div>
+                  {customHabits.length === 0 ? (
+                    <div style={{ fontSize: 13, color: C.textMuted }}>No custom habits created</div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                          {['Habit', 'Created', 'Status'].map(h => (
+                            <th key={h} style={{ padding: '6px 8px', textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 11 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {customHabits.map(h => (
+                          <tr key={h.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                            <td style={{ padding: '9px 8px' }}>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                                <span style={{ fontSize: 18, lineHeight: 1 }}>{h.emoji || '⭐'}</span>
+                                <span style={{ color: C.text, fontWeight: 500 }}>{h.name}</span>
+                              </span>
+                            </td>
+                            <td style={{ padding: '9px 8px', color: C.textMuted }}>{formatDate(h.created_at)}</td>
+                            <td style={{ padding: '9px 8px' }}>
+                              <span style={{
+                                padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600,
+                                background: h.is_active ? '#D1FAE5' : '#F3F4F6',
+                                color: h.is_active ? '#065F46' : '#6B7280'
+                              }}>
+                                {h.is_active ? 'Active' : 'Inactive'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
               </div>
             )}
 
