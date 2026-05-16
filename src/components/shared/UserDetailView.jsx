@@ -124,7 +124,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
         supabase.from('admin_notes').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(20),
         supabase.from('fraud_risk_scores').select('*').eq('user_id', user.id).single(),
         supabase.from('habit_logs').select('*').eq('user_id', user.id)
-          .gte('logged_at', new Date(Date.now() - 86400000).toISOString()).order('logged_at', { ascending: false }),
+          .gte('created_at', new Date(Date.now() - 86400000).toISOString()).order('created_at', { ascending: false }),
         supabase.from('custom_habits').select('id, name, emoji, created_at, is_active').eq('user_id', user.id).order('created_at', { ascending: false })
       ])
       const profile = profileRes.data || user
@@ -186,8 +186,8 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
 
   const pauseAccount = async () => {
     try {
-      await supabase.from('profiles').update({ status: 'inactive', paused_until: new Date(Date.now() + 30 * 86400000).toISOString() }).eq('id', user.id)
-      setUserDetails(prev => ({ ...prev, status: 'inactive' }))
+      await supabase.from('profiles').update({ pause_active: true }).eq('id', user.id)
+      setUserDetails(prev => ({ ...prev, pause_active: true }))
       addToast('Account paused for 30 days', 'warning')
       logAdminAction('account_paused', { userId: user.id, email: user.email })
       onUserUpdated?.()
@@ -197,7 +197,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
   const deleteAccount = async () => {
     if (deleteTyped !== 'DELETE') return
     try {
-      await supabase.from('profiles').update({ status: 'deleted', deleted_at: new Date().toISOString() }).eq('id', user.id)
+      await supabase.from('profiles').update({ deleted: true }).eq('id', user.id)
       addToast('Account deleted', 'error')
       logAdminAction('user_deleted', { userId: user.id, email: user.email })
       onUserUpdated?.()
@@ -210,10 +210,10 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
     setActionLoading(true)
     try {
       const pts = parseInt(actionAmount)
-      const newBalance = (userDetails?.points_balance || 0) + pts
-      await supabase.from('profiles').update({ points_balance: newBalance }).eq('id', user.id)
+      const newBalance = (userDetails?.monthly_points || 0) + pts
+      await supabase.from('profiles').update({ monthly_points: newBalance }).eq('id', user.id)
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Admin bonus: +${pts} points. Reason: ${actionReason}`, type: 'bonus_points', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
-      setUserDetails(prev => ({ ...prev, points_balance: newBalance }))
+      setUserDetails(prev => ({ ...prev, monthly_points: newBalance }))
       addToast(`+${pts} bonus points added`, 'success')
       logAdminAction('bonus_points', { userId: user.id, email: user.email, points: pts, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
@@ -227,10 +227,10 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
     setActionLoading(true)
     try {
       const pts = parseInt(actionAmount)
-      const newBalance = Math.max(0, (userDetails?.points_balance || 0) - pts)
-      await supabase.from('profiles').update({ points_balance: newBalance }).eq('id', user.id)
+      const newBalance = Math.max(0, (userDetails?.monthly_points || 0) - pts)
+      await supabase.from('profiles').update({ monthly_points: newBalance }).eq('id', user.id)
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Admin deduction: -${pts} points. Reason: ${actionReason}`, type: 'deduct_points', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
-      setUserDetails(prev => ({ ...prev, points_balance: newBalance }))
+      setUserDetails(prev => ({ ...prev, monthly_points: newBalance }))
       addToast(`-${pts} points deducted`, 'warning')
       logAdminAction('deduct_points', { userId: user.id, email: user.email, points: pts, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
@@ -243,9 +243,8 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
     if (!actionDays || isNaN(Number(actionDays))) return
     setActionLoading(true)
     try {
-      const frozenUntil = new Date(Date.now() + parseInt(actionDays) * 86400000).toISOString()
-      await supabase.from('streaks').update({ frozen_until: frozenUntil }).eq('user_id', user.id)
-      await supabase.from('admin_notes').insert({ user_id: user.id, note: `Streak frozen for ${actionDays} days. Reason: ${actionReason}`, type: 'streak_freeze', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
+      await supabase.from('profiles').update({ streak_freeze_used: true }).eq('id', user.id)
+      await supabase.from('admin_notes').insert({ user_id: user.id, note: `Streak freeze applied for ${actionDays} days. Reason: ${actionReason}`, type: 'streak_freeze', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       addToast(`Streak frozen for ${actionDays} days`, 'success')
       logAdminAction('streak_freeze', { userId: user.id, email: user.email, days: actionDays, reason: actionReason })
       setActionModal(null); setActionDays(''); setActionReason('')
@@ -284,7 +283,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
 
   const flagForFraud = async () => {
     try {
-      await supabase.from('fraud_risk_scores').upsert({ user_id: user.id, score: 70, admin_flagged: true, flagged_at: new Date().toISOString() })
+      await supabase.from('fraud_risk_scores').upsert({ user_id: user.id, score: 70, admin_flagged: true, created_at: new Date().toISOString() })
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Manually flagged for fraud review`, type: 'fraud_flag', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       addToast('User flagged for fraud review', 'warning')
       logAdminAction('fraud_flag', { userId: user.id, email: user.email })
@@ -295,7 +294,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
 
   const clearFraudFlag = async () => {
     try {
-      await supabase.from('fraud_risk_scores').update({ score: 0, admin_flagged: false, cleared_at: new Date().toISOString() }).eq('user_id', user.id)
+      await supabase.from('fraud_risk_scores').update({ score: 0, admin_flagged: false }).eq('user_id', user.id)
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Fraud flag cleared by admin`, type: 'fraud_clear', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       addToast('Fraud flag cleared', 'success')
       logAdminAction('fraud_clear', { userId: user.id, email: user.email })
@@ -435,7 +434,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                   <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>{u.full_name || 'Unknown'}</h3>
                   {isMinor && <span style={{ background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, border: '1px solid #F59E0B' }}>⚠ MINOR</span>}
                   <TierBadge tier={u.tier} />
-                  <StatusDot status={u.status} showLabel />
+                  <StatusDot status={u.deleted ? 'churned' : u.pause_active ? 'inactive' : (u.subscription_status === 'active' || u.subscription_status === 'trialing' || !u.subscription_status) ? 'active' : 'churned'} showLabel />
                 </div>
                 <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>{u.email}</div>
               </div>
@@ -511,20 +510,19 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                     {[
                       ['Joined', formatDate(u.created_at)],
-                      ['Last Active', formatDate(u.last_active_at || u.updated_at)],
-                      ['Current Streak', `${u.streak_days || 0} days`],
-                      ['Points Balance', (u.points_balance || 0).toLocaleString()],
-                      ['Successful Days', u.successful_days_count || 0],
+                      ['Last Active', formatDate(u.last_active_date || u.updated_at)],
+                      ['Current Streak', `${u.current_streak || 0} days`],
+                      ['Monthly Points', (u.monthly_points || 0).toLocaleString()],
+                      ['Successful Days', u.successful_days || 0],
                       ['Gender', u.gender || 'Not set'],
-                      ['Age', u.birth_year ? (new Date().getFullYear() - u.birth_year) : (u.age || 'Not set')],
-                      ['HealthKit', u.healthkit_connected ? '🍎 Connected' : '— Not connected'],
+                      ['Age', u.date_of_birth ? (new Date().getFullYear() - new Date(u.date_of_birth).getFullYear()) : (u.age || 'Not set')],
                       ['Research Consent', u.research_consent == null
                         ? <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 500 }}>Not set</span>
                         : u.research_consent
                           ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#D1FAE5', color: '#065F46', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✓ Opted in</span>
                           : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FEE2E2', color: '#991B1B', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✗ Opted out</span>
                       ],
-                      ...(!isMinor ? [['Referrals', u.referral_count || 0]] : []),
+                      ...(!isMinor ? [['Referral Code', u.referral_code || '—']] : []),
                       ['Full Name', u.full_name || '—'],
                       ['Date of Birth', u.date_of_birth ? formatDate(u.date_of_birth) : '—'],
                       ['Phone', u.phone || '—'],
@@ -549,7 +547,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                   ) : habits.map(h => (
                     <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
                       <span style={{ color: '#10B981', fontSize: 16 }}>✓</span>
-                      <span style={{ fontSize: 14, color: C.text, flex: 1 }}>{getHabitLabel(h.habit_id)}</span>
+                      <span style={{ fontSize: 14, color: C.text, flex: 1 }}>{getHabitLabel(h.habit_key)}</span>
                       <span style={{ fontSize: 12, color: C.textMuted }}>{h.points_earned} pts</span>
                       {h.photo_url && <span style={{ fontSize: 11, background: '#EFF6FF', color: '#3B82F6', padding: '1px 6px', borderRadius: 6 }}>📷 Photo</span>}
                     </div>

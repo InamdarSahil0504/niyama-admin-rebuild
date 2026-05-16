@@ -42,22 +42,22 @@ function HealthKitSection({ C, insight, sectionStyle }) {
       setHkLoading(true)
       try {
         const [profilesRes, bioRes] = await Promise.all([
-          supabase.from('profiles').select('id, tier, healthkit_connected, gender, age, birth_year, region'),
+          supabase.from('profiles').select('id, tier, gender, age, date_of_birth, region'),
           supabase.from('biometrics').select('user_id, hrv, sleep_duration, step_count, rhr, date').order('date', { ascending: false }).limit(500)
         ])
         const profiles = profilesRes.data || []
         const bios = bioRes.data || []
 
-        const connected = profiles.filter(p => p.healthkit_connected).length
+        // healthkit_connected column does not exist — connection rate not available
+        const connected = 0
         const total = profiles.length
-        const connRate = total > 0 ? Math.round((connected / total) * 100) : 0
+        const connRate = 0
 
-        // Connection rate by tier
+        // Connection rate by tier — not available without healthkit_connected column
         const tierRate = ['free_trial', 'free_expired', 'basic', 'plus', 'premium'].map(tier => {
           const tierProfiles = profiles.filter(p => p.tier === tier)
-          const tierConnected = tierProfiles.filter(p => p.healthkit_connected).length
           const label = tier === 'free_trial' ? 'Free Trial' : tier === 'free_expired' ? 'Free (Exp)' : tier.charAt(0).toUpperCase() + tier.slice(1)
-          return { tier: label, rate: tierProfiles.length > 0 ? Math.round((tierConnected / tierProfiles.length) * 100) : 0, total: tierProfiles.length }
+          return { tier: label, rate: 0, total: tierProfiles.length }
         })
 
         // Avg HRV by age group
@@ -68,7 +68,7 @@ function HealthKitSection({ C, insight, sectionStyle }) {
         const today = new Date()
         const profileAgeMap = {}
         profiles.forEach(p => {
-          const age = p.birth_year ? (today.getFullYear() - p.birth_year) : (p.age || null)
+          const age = p.date_of_birth ? (today.getFullYear() - new Date(p.date_of_birth).getFullYear()) : (p.age || null)
           profileAgeMap[p.id] = age
         })
         const hrvByAge = ageGroups.map(ag => {
@@ -309,14 +309,14 @@ export default function AnalyticsTab({ theme, addToast }) {
       const thirtyAgo = new Date(Date.now() - 30 * 86400000).toISOString()
       const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString()
       const [habitRes, eventsRes, profilesRes] = await Promise.all([
-        supabase.from('habit_logs').select('habit_id').gte('logged_at', thirtyAgo),
+        supabase.from('habit_logs').select('habit_key').gte('created_at', thirtyAgo),
         supabase.from('app_events').select('created_at, event_type').gte('created_at', thirtyAgo).order('created_at'),
-        supabase.from('profiles').select('id, created_at, onboarding_completed').gte('created_at', thirtyAgo)
+        supabase.from('profiles').select('id, created_at, onboarding_complete').gte('created_at', thirtyAgo)
       ])
 
       // Habit completion count
       const habitCountMap = {}
-      if (habitRes.data) habitRes.data.forEach(h => { habitCountMap[h.habit_id] = (habitCountMap[h.habit_id] || 0) + 1 })
+      if (habitRes.data) habitRes.data.forEach(h => { habitCountMap[h.habit_key] = (habitCountMap[h.habit_key] || 0) + 1 })
       const habitChart = ALL_HABITS.map(h => ({ name: h.name, count: habitCountMap[h.id] || 0 })).sort((a, b) => b.count - a.count)
       setHabitData(habitChart)
 
@@ -339,7 +339,7 @@ export default function AnalyticsTab({ theme, addToast }) {
       // Funnel
       const profiles = profilesRes.data || []
       const signups = profiles.length
-      const onboarded = profiles.filter(p => p.onboarding_completed).length
+      const onboarded = profiles.filter(p => p.onboarding_complete).length
       const { count: habitLoggers } = await supabase.from('habit_logs').select('user_id', { count: 'exact', head: true }).in('user_id', profiles.map(p => p.id))
       const { count: retained } = await supabase.from('app_events').select('user_id', { count: 'exact', head: true }).in('user_id', profiles.map(p => p.id)).gte('created_at', sevenAgo)
       setFunnel({ signups, onboarded: onboarded || Math.round(signups * 0.82), firstHabit: habitLoggers || Math.round(signups * 0.71), retained7d: retained || Math.round(signups * 0.55) })

@@ -26,7 +26,7 @@ export default function ComplianceTab({ theme, addToast, logAdminAction }) {
   const fetchData = useCallback(async () => {
     try {
       const [minorsRes, requestsRes, consentRes] = await Promise.all([
-        supabase.from('profiles').select('id, full_name, email, tier, created_at, age, birth_year').eq('is_minor', true),
+        supabase.from('profiles').select('id, full_name, email, tier, created_at, age, date_of_birth').eq('is_minor', true),
         supabase.from('compliance_requests').select('*').order('created_at', { ascending: false }).limit(20),
         supabase.from('app_events').select('id, user_id, created_at, metadata, profiles(full_name, email)').eq('event_type', 'consent_given').order('created_at', { ascending: false }).limit(20)
       ])
@@ -39,7 +39,7 @@ export default function ComplianceTab({ theme, addToast, logAdminAction }) {
   const fetchPhotos = useCallback(async () => {
     setPhotosLoading(true)
     try {
-      let query = supabase.from('habit_logs').select('id, user_id, habit_id, photo_url, photo_reviewed, photo_approved, logged_at, profiles(full_name, email)').not('photo_url', 'is', null).order('logged_at', { ascending: false }).limit(50)
+      let query = supabase.from('habit_logs').select('id, user_id, habit_key, photo_url, photo_reviewed, photo_approved, created_at, profiles(full_name, email)').not('photo_url', 'is', null).order('created_at', { ascending: false }).limit(50)
       if (photoFilter === 'pending') query = query.eq('photo_reviewed', false)
       else if (photoFilter === 'approved') query = query.eq('photo_approved', true)
       else if (photoFilter === 'flagged') query = query.eq('photo_approved', false).eq('photo_reviewed', true)
@@ -161,7 +161,7 @@ export default function ComplianceTab({ theme, addToast, logAdminAction }) {
                   <td style={{ padding: '10px 8px', color: C.textMuted }}>{m.email}</td>
                   <td style={{ padding: '10px 8px', color: C.text }}>{m.tier || 'free'}</td>
                   <td style={{ padding: '10px 8px', color: C.textMuted }}>{formatDate(m.created_at)}</td>
-                  <td style={{ padding: '10px 8px', color: C.text }}>{m.age || (m.birth_year ? new Date().getFullYear() - m.birth_year : '—')}</td>
+                  <td style={{ padding: '10px 8px', color: C.text }}>{m.age || (m.date_of_birth ? new Date().getFullYear() - new Date(m.date_of_birth).getFullYear() : '—')}</td>
                   <td style={{ padding: '10px 8px' }}>
                     <span style={{ padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 700, background: '#FEE2E2', color: '#EF4444' }}>BLOCKED</span>
                   </td>
@@ -206,9 +206,9 @@ export default function ComplianceTab({ theme, addToast, logAdminAction }) {
                   )}
                 </div>
                 <div style={{ padding: '10px 12px' }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 2 }}>{getHabitLabel(photo.habit_id)}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 2 }}>{getHabitLabel(photo.habit_key)}</div>
                   <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>
-                    {photo.profiles?.full_name || 'Unknown'} · {formatDate(photo.logged_at)}
+                    {photo.profiles?.full_name || 'Unknown'} · {formatDate(photo.created_at)}
                   </div>
                   {!photo.photo_reviewed && (
                     <div style={{ display: 'flex', gap: 6 }}>

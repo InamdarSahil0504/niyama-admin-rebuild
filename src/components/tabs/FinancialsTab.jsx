@@ -56,7 +56,7 @@ export default function FinancialsTab({ theme, addToast, logAdminAction }) {
     try {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString()
       const { data } = await supabase.from('rewards')
-        .select('id, user_id, amount, status, created_at, tremendous_order_id, profiles(full_name, email, tier, created_at, is_minor, points_balance)')
+        .select('id, user_id, amount, status, created_at, tremendous_order_id, profiles(full_name, email, tier, created_at, is_minor, monthly_points)')
         .eq('status', 'pending')
         .gte('amount', 0.01)
         .order('created_at', { ascending: false })

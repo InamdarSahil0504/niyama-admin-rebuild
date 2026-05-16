@@ -53,7 +53,7 @@ export default function ActivityTab({ theme, addToast }) {
     try {
       let query = supabase
         .from('app_events')
-        .select('id, event_type, user_id, metadata, created_at, profiles(full_name, email)', { count: 'exact' })
+        .select('id, event_type, user_id, event_data, created_at, profiles(full_name, email)', { count: 'exact' })
         .order('created_at', { ascending: false })
       if (typeFilter !== 'all') query = query.eq('event_type', typeFilter)
       query = query.range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
@@ -131,7 +131,7 @@ export default function ActivityTab({ theme, addToast }) {
                 const icon = EVENT_ICONS[event.event_type] || EVENT_ICONS.default
                 const color = EVENT_COLORS[event.event_type] || EVENT_COLORS.default
                 const profile = event.profiles || {}
-                const meta = event.metadata || {}
+                const meta = event.event_data || {}
                 let description = ''
                 if (event.event_type === 'habit_complete') description = `Completed ${getHabitLabel(meta.habit_id) || 'a habit'} for ${meta.points || 0} pts`
                 else if (event.event_type === 'reward_request') description = `Requested reward of $${Number(meta.amount || 0).toFixed(2)}`

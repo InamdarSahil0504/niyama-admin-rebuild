@@ -36,13 +36,13 @@ export default function ReportsTab({ theme, addToast, logAdminAction }) {
       const [newSignupsRes, activeRes, habitsRes, successRes, rewardsRes] = await Promise.all([
         supabase.from('profiles').select('id', { count: 'exact', head: true }).gte('created_at', since),
         supabase.from('daily_summaries').select('user_id', { count: 'exact', head: true }).gte('date', since.split('T')[0]),
-        supabase.from('habit_logs').select('habit_id, points_earned').gte('logged_at', since),
-        supabase.from('daily_summaries').select('id', { count: 'exact', head: true }).gte('date', since.split('T')[0]).eq('successful_day', true),
+        supabase.from('habit_logs').select('habit_key, points_earned').gte('created_at', since),
+        supabase.from('daily_summaries').select('id', { count: 'exact', head: true }).gte('date', since.split('T')[0]).eq('is_successful', true),
         supabase.from('rewards').select('amount').eq('status', 'paid').gte('created_at', since)
       ])
 
       const habitCountMap = {}
-      if (habitsRes.data) habitsRes.data.forEach(h => { habitCountMap[h.habit_id] = (habitCountMap[h.habit_id] || 0) + 1 })
+      if (habitsRes.data) habitsRes.data.forEach(h => { habitCountMap[h.habit_key] = (habitCountMap[h.habit_key] || 0) + 1 })
       const topHabits = Object.entries(habitCountMap).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id, count]) => ({ id: getHabitLabel(id), count }))
       const rewardsPaid = (rewardsRes.data || []).reduce((a, r) => a + (r.amount || 0), 0)
 

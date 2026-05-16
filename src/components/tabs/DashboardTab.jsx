@@ -52,13 +52,13 @@ export default function DashboardTab({ theme, addToast }) {
       const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
 
       const [profilesRes, todayRes, rewardsRes, fraudRes, unreadRes, dailyRes, habitLogsRes] = await Promise.all([
-        supabase.from('profiles').select('id, tier, created_at, status, healthkit_connected, is_minor, points_balance'),
-        supabase.from('daily_summaries').select('user_id, total_points, successful_day, created_at').eq('date', today),
+        supabase.from('profiles').select('id, tier, created_at, subscription_status, pause_active, deleted, is_minor, monthly_points'),
+        supabase.from('daily_summaries').select('user_id, total_points, is_successful, created_at').eq('date', today),
         supabase.from('rewards').select('id, amount, status').eq('status', 'pending'),
         supabase.from('fraud_risk_scores').select('id, score').gte('score', 70),
         supabase.from('contact_messages').select('id').eq('is_read', false).eq('is_admin_reply', false),
-        supabase.from('daily_summaries').select('date, total_points, successful_day, mood').gte('date', thirtyAgo).order('date'),
-        supabase.from('habit_logs').select('habit_id, user_id, points_earned').gte('logged_at', thirtyAgo)
+        supabase.from('daily_summaries').select('date, total_points, is_successful').gte('date', thirtyAgo).order('date'),
+        supabase.from('habit_logs').select('habit_key, user_id, points_earned').gte('created_at', thirtyAgo)
       ])
 
       const profiles = profilesRes.data || []
@@ -74,7 +74,7 @@ export default function DashboardTab({ theme, addToast }) {
       const activeToday = todaySummaries.length
       const mrrCalc = profiles.reduce((acc, p) => acc + (TIERS[p.tier]?.price || 0), 0)
       const totalPointsIssued = dailySummaries.reduce((a, d) => a + (d.total_points || 0), 0)
-      const successfulDaysToday = todaySummaries.filter(d => d.successful_day).length
+      const successfulDaysToday = todaySummaries.filter(d => d.is_successful).length
       const rewardsPending = pendingRewards.reduce((a, r) => a + (r.amount || 0), 0)
 
       // Last week KPIs for trend
@@ -89,12 +89,11 @@ export default function DashboardTab({ theme, addToast }) {
       setAlerts({ fraud: fraudCritical.length, unread: unreadMsgs.length })
 
       // Minor users with reward balances (compliance check)
-      const minorRewardBalance = profiles.filter(p => p.is_minor && (p.points_balance || 0) > 0).length
+      const minorRewardBalance = profiles.filter(p => p.is_minor && (p.monthly_points || 0) > 0).length
       setAlerts(prev => ({ ...prev, minorRewardBalance }))
 
-      // HealthKit connection rate
-      const hkConnected = profiles.filter(p => p.healthkit_connected).length
-      setHealthkitRate(profiles.length > 0 ? Math.round((hkConnected / profiles.length) * 100) : 0)
+      // HealthKit connection rate — column not in schema, show null
+      setHealthkitRate(null)
 
       // DAU chart - group daily summaries by date
       const dauMap = {}
@@ -113,7 +112,7 @@ export default function DashboardTab({ theme, addToast }) {
 
       // Habit completion chart
       const habitCountMap = {}
-      habitLogs.forEach(h => { habitCountMap[h.habit_id] = (habitCountMap[h.habit_id] || 0) + 1 })
+      habitLogs.forEach(h => { habitCountMap[h.habit_key] = (habitCountMap[h.habit_key] || 0) + 1 })
       const habitChartData = ALL_HABITS.map(h => ({
         name: h.name,
         count: habitCountMap[h.id] || 0,
@@ -130,13 +129,8 @@ export default function DashboardTab({ theme, addToast }) {
         { range: '60+ days', count: Math.round(totalUsers * 0.05) }
       ])
 
-      // Mood data
-      const moodMap = {}
-      dailySummaries.forEach(d => {
-        if (d.mood) moodMap[d.mood] = (moodMap[d.mood] || 0) + 1
-      })
-      const moodArr = Object.entries(moodMap).map(([name, value]) => ({ name, value }))
-      setMoodData(moodArr)
+      // Mood data — mood column not in daily_summaries schema; leave empty
+      setMoodData([])
 
       // Top users today
       const sortedToday = [...todaySummaries].sort((a, b) => (b.total_points || 0) - (a.total_points || 0)).slice(0, 5)
@@ -192,7 +186,7 @@ export default function DashboardTab({ theme, addToast }) {
           <KPICard icon="🏆" label="Points Issued (30d)" value={(kpis.totalPointsIssued || 0).toLocaleString()} C={C} />
           <KPICard icon="✅" label="Successful Days Today" value={kpis.successfulDaysToday || 0} C={C} />
           <KPICard icon="🎁" label="Rewards Pending" value={formatMoney(kpis.rewardsPending)} color="#C96A52" C={C} />
-          <KPICard icon="🍎" label="HealthKit Connected" value={healthkitRate !== null ? `${healthkitRate}%` : '—'} C={C} color="#4A7A68" />
+          <KPICard icon="🍎" label="HealthKit Connected" value="—" C={C} color="#4A7A68" />
         </div>
       )}
 
@@ -347,7 +341,7 @@ export default function DashboardTab({ theme, addToast }) {
                   <td style={{ padding: '8px', color: C.text }}>User {u.user_id?.slice(0, 8) || '—'}</td>
                   <td style={{ padding: '8px', color: '#4A7A68', fontWeight: 600 }}>{(u.total_points || 0).toLocaleString()} pts</td>
                   <td style={{ padding: '8px' }}>
-                    <span style={{ color: u.successful_day ? '#10B981' : '#6B7280' }}>{u.successful_day ? '✓ Yes' : '—'}</span>
+                    <span style={{ color: u.is_successful ? '#10B981' : '#6B7280' }}>{u.is_successful ? '✓ Yes' : '—'}</span>
                   </td>
                 </tr>
               ))}

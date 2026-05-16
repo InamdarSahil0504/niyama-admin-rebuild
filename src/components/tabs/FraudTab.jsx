@@ -54,7 +54,7 @@ export default function FraudTab({ theme, addToast, logAdminAction, onFraudCount
     try {
       const { data } = await supabase
         .from('fraud_risk_scores')
-        .select('*, profiles(id, full_name, email, tier, points_balance, successful_days_count, last_active_at, status, is_minor)')
+        .select('*, profiles(id, full_name, email, tier, monthly_points, successful_days, last_active_date, subscription_status, pause_active, deleted, is_minor)')
         .gt('score', 0)
         .order('score', { ascending: false })
       // Exclude minor users — they cannot redeem rewards so fraud risk is irrelevant
@@ -202,11 +202,11 @@ export default function FraudTab({ theme, addToast, logAdminAction, onFraudCount
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
                   <div style={{ padding: 10, background: C.bg, borderRadius: 8 }}>
                     <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 2 }}>Total Points</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{(p.points_balance || 0).toLocaleString()}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{(p.monthly_points || 0).toLocaleString()}</div>
                   </div>
                   <div style={{ padding: 10, background: C.bg, borderRadius: 8 }}>
                     <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 2 }}>Successful Days</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{p.successful_days_count || 0}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{p.successful_days || 0}</div>
                   </div>
                 </div>
                 <button
