@@ -8,7 +8,7 @@ const TOTAL_SHARES = 9000000
 const VESTING_MONTHS = 48
 
 function formatDate(d) {
-  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 
 function formatMoney(n) { return '$' + Number(n || 0).toLocaleString() }

@@ -2,11 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../../supabase.js'
 import { TierBadge } from './TierBadge.jsx'
 import { StatusDot } from './StatusDot.jsx'
-import { TIERS } from '../../config.js'
+import { TIERS, getHabitLabel } from '../../config.js'
 
 function formatDate(d) {
   if (!d) return 'N/A'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 function formatMoney(n) {
   if (n == null) return '$0.00'
@@ -83,7 +83,7 @@ const SIGNALS = [
   { key: 'identical_times', label: 'Identical Times' }
 ]
 
-export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdminAction }) {
+export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, addToast, logAdminAction }) {
   const [activeTab, setActiveTab] = useState('overview')
   const [userDetails, setUserDetails] = useState(null)
   const [rewards, setRewards] = useState([])
@@ -97,6 +97,11 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
   const [deleteStep, setDeleteStep] = useState(0)
   const [deleteTyped, setDeleteTyped] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // Editable profile state
+  const [isEditing, setIsEditing] = useState(false)
+  const [editForm, setEditForm] = useState({ full_name: '', date_of_birth: '', phone: '', region: '' })
+  const [editSaving, setEditSaving] = useState(false)
 
   // Action modal state
   const [actionModal, setActionModal] = useState(null) // { type: 'bonus'|'deduct'|'freeze'|'reward'|'message' }
@@ -122,7 +127,14 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
           .gte('logged_at', new Date(Date.now() - 86400000).toISOString()).order('logged_at', { ascending: false }),
         supabase.from('custom_habits').select('id, name, emoji, created_at, is_active').eq('user_id', user.id).order('created_at', { ascending: false })
       ])
-      setUserDetails(profileRes.data || user)
+      const profile = profileRes.data || user
+      setUserDetails(profile)
+      setEditForm({
+        full_name: profile.full_name || '',
+        date_of_birth: profile.date_of_birth || '',
+        phone: profile.phone || '',
+        region: profile.region || ''
+      })
       setRewards(rewardsRes.data || [])
       setMessages(messagesRes.data || [])
       setNotes(notesRes.data || [])
@@ -137,7 +149,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
   }, [user])
 
   useEffect(() => {
-    if (isOpen && user) { fetchAll(); setActiveTab('overview'); setDeleteStep(0); setActionModal(null) }
+    if (isOpen && user) { fetchAll(); setActiveTab('overview'); setDeleteStep(0); setActionModal(null); setIsEditing(false) }
   }, [isOpen, user, fetchAll])
 
   const sendReply = async () => {
@@ -168,6 +180,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       setUserDetails(prev => ({ ...prev, tier: newTier }))
       addToast(`Tier changed to ${TIERS[newTier]?.name}`, 'success')
       logAdminAction('tier_change', { userId: user.id, email: user.email, newTier })
+      onUserUpdated?.()
     } catch { addToast('Failed to change tier', 'error') }
   }
 
@@ -177,6 +190,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       setUserDetails(prev => ({ ...prev, status: 'inactive' }))
       addToast('Account paused for 30 days', 'warning')
       logAdminAction('account_paused', { userId: user.id, email: user.email })
+      onUserUpdated?.()
     } catch { addToast('Failed to pause account', 'error') }
   }
 
@@ -186,6 +200,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       await supabase.from('profiles').update({ status: 'deleted', deleted_at: new Date().toISOString() }).eq('id', user.id)
       addToast('Account deleted', 'error')
       logAdminAction('user_deleted', { userId: user.id, email: user.email })
+      onUserUpdated?.()
       onClose()
     } catch { addToast('Failed to delete account', 'error') }
   }
@@ -202,6 +217,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       addToast(`+${pts} bonus points added`, 'success')
       logAdminAction('bonus_points', { userId: user.id, email: user.email, points: pts, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
+      onUserUpdated?.()
     } catch { addToast('Failed to add points', 'error') }
     setActionLoading(false)
   }
@@ -218,6 +234,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       addToast(`-${pts} points deducted`, 'warning')
       logAdminAction('deduct_points', { userId: user.id, email: user.email, points: pts, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
+      onUserUpdated?.()
     } catch { addToast('Failed to deduct points', 'error') }
     setActionLoading(false)
   }
@@ -232,6 +249,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       addToast(`Streak frozen for ${actionDays} days`, 'success')
       logAdminAction('streak_freeze', { userId: user.id, email: user.email, days: actionDays, reason: actionReason })
       setActionModal(null); setActionDays(''); setActionReason('')
+      onUserUpdated?.()
     } catch { addToast('Failed to freeze streak', 'error') }
     setActionLoading(false)
   }
@@ -259,6 +277,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       addToast(`Manual reward ${formatMoney(amount)} issued`, 'success')
       logAdminAction('manual_reward', { userId: user.id, email: user.email, amount, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
+      onUserUpdated?.()
     } catch { addToast('Failed to issue reward', 'error') }
     setActionLoading(false)
   }
@@ -270,6 +289,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       addToast('User flagged for fraud review', 'warning')
       logAdminAction('fraud_flag', { userId: user.id, email: user.email })
       fetchAll()
+      onUserUpdated?.()
     } catch { addToast('Failed to flag user', 'error') }
   }
 
@@ -280,7 +300,39 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
       addToast('Fraud flag cleared', 'success')
       logAdminAction('fraud_clear', { userId: user.id, email: user.email })
       fetchAll()
+      onUserUpdated?.()
     } catch { addToast('Failed to clear flag', 'error') }
+  }
+
+  const saveProfileEdit = async () => {
+    setEditSaving(true)
+    try {
+      const updatePayload = {
+        full_name: editForm.full_name || null,
+        date_of_birth: editForm.date_of_birth || null,
+        phone: editForm.phone || null,
+        region: editForm.region || null
+      }
+      const { error } = await supabase.from('profiles').update(updatePayload).eq('id', user.id)
+      if (error) throw error
+      const changedFields = Object.keys(updatePayload).filter(k => editForm[k] !== (userDetails?.[k] || ''))
+      await supabase.from('admin_notes').insert({
+        user_id: user.id,
+        note: `[AUDIT] Admin updated profile fields: ${Object.keys(updatePayload).join(', ')}`,
+        type: 'profile_edit',
+        created_at: new Date().toISOString(),
+        admin: import.meta.env.VITE_ADMIN_EMAIL
+      })
+      addToast('Profile updated', 'success')
+      logAdminAction('profile_edit', { userId: user.id, email: user.email, fields: Object.keys(updatePayload) })
+      setIsEditing(false)
+      fetchAll()
+      onUserUpdated?.()
+    } catch (err) {
+      addToast('Failed to save profile', 'error')
+      console.error(err)
+    }
+    setEditSaving(false)
   }
 
   if (!isOpen || !user) return null
@@ -407,29 +459,84 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
           {/* Content */}
           <div style={{ padding: 24, flex: 1 }}>
             {activeTab === 'overview' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                {[
-                  ['Joined', formatDate(u.created_at)],
-                  ['Last Active', formatDate(u.last_active_at || u.updated_at)],
-                  ['Current Streak', `${u.streak_days || 0} days`],
-                  ['Points Balance', (u.points_balance || 0).toLocaleString()],
-                  ['Successful Days', u.successful_days_count || 0],
-                  ['Gender', u.gender || 'Not set'],
-                  ['Age', u.birth_year ? (new Date().getFullYear() - u.birth_year) : (u.age || 'Not set')],
-                  ['HealthKit', u.healthkit_connected ? '🍎 Connected' : '— Not connected'],
-                  ['Research Consent', u.research_consent == null
-                    ? <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 500 }}>Not set</span>
-                    : u.research_consent
-                      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#D1FAE5', color: '#065F46', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✓ Opted in</span>
-                      : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FEE2E2', color: '#991B1B', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✗ Opted out</span>
-                  ],
-                  ...(!isMinor ? [['Referrals', u.referral_count || 0]] : [])
-                ].map(([label, val]) => (
-                  <div key={label} style={{ padding: 14, background: C.bg, borderRadius: 10 }}>
-                    <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{val}</div>
+              <div>
+                {/* Edit button row */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+                  {!isEditing ? (
+                    <button onClick={() => setIsEditing(true)} style={{ padding: '7px 14px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, cursor: 'pointer', color: C.text, fontWeight: 500 }}>
+                      ✏️ Edit Profile
+                    </button>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button onClick={() => { setIsEditing(false); setEditForm({ full_name: u.full_name || '', date_of_birth: u.date_of_birth || '', phone: u.phone || '', region: u.region || '' }) }} style={{ padding: '7px 14px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, cursor: 'pointer', color: C.text }}>Cancel</button>
+                      <button onClick={saveProfileEdit} disabled={editSaving} style={{ padding: '7px 14px', background: '#4A7A68', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: editSaving ? 'not-allowed' : 'pointer', opacity: editSaving ? 0.7 : 1 }}>{editSaving ? 'Saving...' : 'Save Changes'}</button>
+                    </div>
+                  )}
+                </div>
+
+                {isEditing ? (
+                  /* Edit form — only the 4 editable fields */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    {[
+                      { label: 'Full Name', field: 'full_name', type: 'text', placeholder: 'Jane Smith' },
+                      { label: 'Date of Birth', field: 'date_of_birth', type: 'date', placeholder: '' },
+                      { label: 'Phone Number', field: 'phone', type: 'text', placeholder: '+1 555 000 0000' },
+                    ].map(({ label, field, type, placeholder }) => (
+                      <div key={field}>
+                        <label style={{ fontSize: 12, color: C.textMuted, fontWeight: 600, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</label>
+                        <input
+                          type={type}
+                          value={editForm[field]}
+                          onChange={e => setEditForm(prev => ({ ...prev, [field]: e.target.value }))}
+                          placeholder={placeholder}
+                          style={{ width: '100%', padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, background: C.bg, color: C.text, outline: 'none', fontFamily: 'Inter, sans-serif', boxSizing: 'border-box' }}
+                        />
+                      </div>
+                    ))}
+                    <div>
+                      <label style={{ fontSize: 12, color: C.textMuted, fontWeight: 600, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 0.5 }}>Region</label>
+                      <select
+                        value={editForm.region}
+                        onChange={e => setEditForm(prev => ({ ...prev, region: e.target.value }))}
+                        style={{ width: '100%', padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, background: C.bg, color: C.text, outline: 'none', fontFamily: 'Inter, sans-serif', cursor: 'pointer' }}
+                      >
+                        <option value="">— Not set</option>
+                        <option value="USA">USA</option>
+                        <option value="India">India</option>
+                      </select>
+                    </div>
                   </div>
-                ))}
+                ) : (
+                  /* Read-only view — all fields */
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                    {[
+                      ['Joined', formatDate(u.created_at)],
+                      ['Last Active', formatDate(u.last_active_at || u.updated_at)],
+                      ['Current Streak', `${u.streak_days || 0} days`],
+                      ['Points Balance', (u.points_balance || 0).toLocaleString()],
+                      ['Successful Days', u.successful_days_count || 0],
+                      ['Gender', u.gender || 'Not set'],
+                      ['Age', u.birth_year ? (new Date().getFullYear() - u.birth_year) : (u.age || 'Not set')],
+                      ['HealthKit', u.healthkit_connected ? '🍎 Connected' : '— Not connected'],
+                      ['Research Consent', u.research_consent == null
+                        ? <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 500 }}>Not set</span>
+                        : u.research_consent
+                          ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#D1FAE5', color: '#065F46', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✓ Opted in</span>
+                          : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FEE2E2', color: '#991B1B', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✗ Opted out</span>
+                      ],
+                      ...(!isMinor ? [['Referrals', u.referral_count || 0]] : []),
+                      ['Full Name', u.full_name || '—'],
+                      ['Date of Birth', u.date_of_birth ? formatDate(u.date_of_birth) : '—'],
+                      ['Phone', u.phone || '—'],
+                      ['Region', u.region || '—'],
+                    ].map(([label, val]) => (
+                      <div key={label} style={{ padding: 14, background: C.bg, borderRadius: 10 }}>
+                        <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -442,7 +549,7 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
                   ) : habits.map(h => (
                     <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
                       <span style={{ color: '#10B981', fontSize: 16 }}>✓</span>
-                      <span style={{ fontSize: 14, color: C.text, flex: 1 }}>{h.habit_id?.replace(/_/g, ' ')}</span>
+                      <span style={{ fontSize: 14, color: C.text, flex: 1 }}>{getHabitLabel(h.habit_id)}</span>
                       <span style={{ fontSize: 12, color: C.textMuted }}>{h.points_earned} pts</span>
                       {h.photo_url && <span style={{ fontSize: 11, background: '#EFF6FF', color: '#3B82F6', padding: '1px 6px', borderRadius: 6 }}>📷 Photo</span>}
                     </div>

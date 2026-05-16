@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../../supabase.js'
 import { ConfirmDialog } from '../shared/ConfirmDialog.jsx'
+import { getHabitLabel } from '../../config.js'
 
 function formatDate(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 
 export default function ComplianceTab({ theme, addToast, logAdminAction }) {
@@ -205,7 +206,7 @@ export default function ComplianceTab({ theme, addToast, logAdminAction }) {
                   )}
                 </div>
                 <div style={{ padding: '10px 12px' }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 2 }}>{photo.habit_id?.replace(/_/g, ' ')}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 2 }}>{getHabitLabel(photo.habit_id)}</div>
                   <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>
                     {photo.profiles?.full_name || 'Unknown'} · {formatDate(photo.logged_at)}
                   </div>

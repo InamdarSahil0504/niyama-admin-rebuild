@@ -399,7 +399,7 @@ export default function App() {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 12, color: C.textMuted }}>
-                Updated {lastUpdated.toLocaleTimeString()}
+                Updated {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}
               </span>
               <button
                 onClick={() => { setRefreshKey(k => k + 1); setLastUpdated(new Date()); addToast('Data refreshed', 'info') }}

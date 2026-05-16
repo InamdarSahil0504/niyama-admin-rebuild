@@ -9,7 +9,7 @@ function formatDate(d) {
   if (diff < 60000) return 'just now'
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 
 export default function MessagesTab({ theme, addToast, logAdminAction, onUnreadCountChange }) {

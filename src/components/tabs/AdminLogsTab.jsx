@@ -3,7 +3,7 @@ import { supabase } from '../../supabase.js'
 
 function formatDateTime(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' })
 }
 
 const ACTION_TYPES = ['all', 'login', 'tier_change', 'broadcast', 'fraud_action', 'reward_approval', 'gdpr_request', 'note_added', 'user_deleted', 'report_generated', 'cron_trigger', 'export_csv']

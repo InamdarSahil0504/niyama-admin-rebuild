@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../../supabase.js'
+import { getHabitLabel } from '../../config.js'
 
 function formatDateTime(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' })
 }
 
 const EVENT_ICONS = {
@@ -132,7 +133,7 @@ export default function ActivityTab({ theme, addToast }) {
                 const profile = event.profiles || {}
                 const meta = event.metadata || {}
                 let description = ''
-                if (event.event_type === 'habit_complete') description = `Completed ${meta.habit_id?.replace(/_/g, ' ') || 'a habit'} for ${meta.points || 0} pts`
+                if (event.event_type === 'habit_complete') description = `Completed ${getHabitLabel(meta.habit_id) || 'a habit'} for ${meta.points || 0} pts`
                 else if (event.event_type === 'reward_request') description = `Requested reward of $${Number(meta.amount || 0).toFixed(2)}`
                 else if (event.event_type === 'tier_change') description = `Changed tier from ${meta.from || '?'} to ${meta.to || '?'}`
                 else if (event.event_type === 'signup') description = 'Created account'

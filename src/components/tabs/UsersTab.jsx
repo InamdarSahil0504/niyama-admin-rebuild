@@ -8,7 +8,7 @@ import { TIERS } from '../../config.js'
 
 function formatDate(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 
 function daysSince(d) {
@@ -39,7 +39,7 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
     setPage(1)
     setLoading(true)
     try {
-      let query = supabase.from('profiles').select('id, full_name, email, tier, status, gender, created_at, last_active_at, points_balance, successful_days_count, streak_days, is_minor, healthkit_connected', { count: 'exact' })
+      let query = supabase.from('profiles').select('id, full_name, email, tier, status, gender, created_at, last_active_at, points_balance, successful_days_count, streak_days, is_minor, healthkit_connected, research_consent', { count: 'exact' })
       if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
       if (tierFilter !== 'all') query = query.eq('tier', tierFilter)
       if (statusFilter !== 'all') query = query.eq('status', statusFilter)
@@ -50,6 +50,7 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
       query = query.range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
       const { data, count, error } = await query
       if (error) throw error
+      // research_consent column may not exist yet — handle gracefully (all undefined shows as —)
       setUsers(data || [])
       setTotalCount(count || 0)
     } catch (err) {
@@ -82,14 +83,15 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
 
   const exportCSV = () => {
     const selectedUsers = users.filter(u => selected.has(u.id))
-    const headers = ['Name', 'Email', 'Tier', 'Status', 'Points', 'Successful Days', 'Streak', 'Last Active', 'Joined', 'IsMinor', 'MinorDataNote']
+    const headers = ['Name', 'Email', 'Tier', 'Status', 'Points', 'Successful Days', 'Streak', 'Last Active', 'Joined', 'IsMinor', 'MinorDataNote', 'ResearchConsent']
     const rows = selectedUsers.map(u => [
       u.full_name || '', u.email || '', u.tier || '', u.status || '',
       u.is_minor ? 'HIDDEN' : (u.points_balance || 0),
       u.successful_days_count || 0, u.streak_days || 0,
       formatDate(u.last_active_at), formatDate(u.created_at),
       u.is_minor ? 'true' : 'false',
-      u.is_minor ? 'Handle under COPPA/GDPR-K' : ''
+      u.is_minor ? 'Handle under COPPA/GDPR-K' : '',
+      u.research_consent === true ? 'true' : u.research_consent === false ? 'false' : ''
     ])
     const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
@@ -129,6 +131,7 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
     { key: 'last_active_at', label: 'Last Active' },
     { key: 'created_at', label: 'Joined' },
     { key: 'healthkit_connected', label: 'HealthKit', sortable: false },
+    { key: 'research_consent', label: 'Research', sortable: false },
   ]
 
   const inputStyle = { padding: '9px 14px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, background: C.card, color: C.text, outline: 'none', fontFamily: 'Inter, sans-serif' }
@@ -242,6 +245,11 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
                         ? <span title="HealthKit connected" style={{ fontSize: 16 }}>🍎</span>
                         : <span style={{ color: C.border, fontSize: 14 }}>—</span>}
                     </td>
+                    <td style={{ padding: '12px 14px', textAlign: 'center' }}>
+                      {u.research_consent === true
+                        ? <span title="Research consent given" style={{ fontSize: 16, color: '#10B981' }}>🔬</span>
+                        : <span style={{ color: C.border, fontSize: 14 }}>—</span>}
+                    </td>
                     <td style={{ padding: '12px 14px', color: C.textMuted }}>›</td>
                   </tr>
                 )
@@ -267,6 +275,7 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
         user={selectedUser}
         isOpen={!!selectedUser}
         onClose={() => setSelectedUser(null)}
+        onUserUpdated={fetchUsers}
         theme={C}
         addToast={addToast}
         logAdminAction={logAdminAction}

@@ -1,9 +1,10 @@
 import React, { useState, useCallback } from 'react'
 import { supabase } from '../../supabase.js'
+import { getHabitLabel } from '../../config.js'
 
 function formatDate(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 function formatMoney(n) { return '$' + Number(n || 0).toFixed(2) }
 
@@ -42,7 +43,7 @@ export default function ReportsTab({ theme, addToast, logAdminAction }) {
 
       const habitCountMap = {}
       if (habitsRes.data) habitsRes.data.forEach(h => { habitCountMap[h.habit_id] = (habitCountMap[h.habit_id] || 0) + 1 })
-      const topHabits = Object.entries(habitCountMap).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id, count]) => ({ id: id.replace(/_/g, ' '), count }))
+      const topHabits = Object.entries(habitCountMap).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id, count]) => ({ id: getHabitLabel(id), count }))
       const rewardsPaid = (rewardsRes.data || []).reduce((a, r) => a + (r.amount || 0), 0)
 
       setReportData({
@@ -106,7 +107,7 @@ export default function ReportsTab({ theme, addToast, logAdminAction }) {
         </head>
         <body>
           <h1>Niyama ${reportData.type} Report</h1>
-          <h2>Generated ${new Date(reportData.generatedAt).toLocaleString()}</h2>
+          <h2>Generated ${new Date(reportData.generatedAt).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })} PT</h2>
           <table>
             <tr><th>Metric</th><th>Value</th></tr>
             <tr><td>New Signups</td><td>${reportData.newSignups}</td></tr>
@@ -191,7 +192,7 @@ export default function ReportsTab({ theme, addToast, logAdminAction }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div>
               <h3 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700, color: C.text }}>{reportData.type} Report Preview</h3>
-              <div style={{ fontSize: 12, color: C.textMuted }}>{reportData.period} · Generated {new Date(reportData.generatedAt).toLocaleString()}</div>
+              <div style={{ fontSize: 12, color: C.textMuted }}>{reportData.period} · Generated {new Date(reportData.generatedAt).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })} PT</div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={downloadPDF} style={secBtnStyle}>Download PDF</button>

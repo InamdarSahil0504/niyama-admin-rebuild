@@ -9,7 +9,7 @@ import { ChartSkeleton, CardSkeleton } from '../shared/LoadingSkeleton.jsx'
 
 function formatDate(d) {
   if (!d) return 'N/A'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 function formatMoney(n) { return '$' + Number(n || 0).toFixed(2) }
 
@@ -106,7 +106,7 @@ export default function DashboardTab({ theme, addToast }) {
       for (let i = 29; i >= 0; i--) {
         const dt = new Date(); dt.setDate(dt.getDate() - i)
         const key = dt.toISOString().split('T')[0]
-        const label = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        const label = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' })
         dauArr.push({ date: label, users: dauMap[key]?.size || Math.floor(Math.random() * 20 + 5) })
       }
       setDauData(dauArr)

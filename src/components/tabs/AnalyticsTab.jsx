@@ -5,7 +5,7 @@ import { ALL_HABITS } from '../../config.js'
 
 function formatDate(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 
 const GA4_SAMPLE = {
@@ -94,7 +94,7 @@ function HealthKitSection({ C, insight, sectionStyle }) {
           rhrMap[b.date].push(b.rhr)
         })
         const rhrTrend = Object.entries(rhrMap).slice(-30).map(([date, vals]) => ({
-          date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' }),
           rhr: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)
         }))
 

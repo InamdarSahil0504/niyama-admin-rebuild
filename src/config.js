@@ -121,6 +121,28 @@ export const SUCCESSFUL_DAY_BONUS = 50
 export const PERFECT_DAY_BONUS = 100
 export const POINTS_PER_DOLLAR = 1000
 
+export const HABIT_KEY_LABELS = {
+  wake: 'Wake Consistency',
+  sleep: 'Sleep Duration',
+  steps: 'Steps',
+  screen_time: 'Screen Time',
+  no_phone: 'No Phone after 10:30pm',
+  stand: 'Stand Consistency',
+  sunlight: 'Morning Sunlight',
+  no_late_food: 'No Late Food after 8pm',
+  recovery: 'Recovery Practice — Yoga/Stretching',
+  meditation: 'Meditation',
+  hydration: 'Hydration (Legacy)',
+  reading: 'Reading (Legacy)',
+}
+
+export function getHabitLabel(key) {
+  if (!key) return ''
+  if (HABIT_KEY_LABELS[key]) return HABIT_KEY_LABELS[key]
+  if (key.startsWith('custom_')) return 'Custom Habit'
+  return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
 export const FRAUD_THRESHOLDS = {
   critical: 70,
   high: 40,

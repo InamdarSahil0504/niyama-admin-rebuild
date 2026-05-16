@@ -4,7 +4,7 @@ import { supabase } from '../../supabase.js'
 import { TIERS } from '../../config.js'
 
 function formatMoney(n) { return '$' + Number(n || 0).toFixed(2) }
-function formatDate(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }
+function formatDate(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' }) }
 
 const TIER_COLORS_MAP = { free_trial: '#6B7280', free_expired: '#9CA3AF', basic: '#3B82F6', plus: '#4A7A68', premium: '#C9973A' }
 
@@ -150,7 +150,7 @@ export default function FinancialsTab({ theme, addToast, logAdminAction }) {
       const revArr = []
       for (let i = revenueRange - 1; i >= 0; i--) {
         const dt = new Date(); dt.setDate(dt.getDate() - i)
-        const label = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        const label = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' })
         const active = profiles.filter(p => new Date(p.created_at) <= dt).length
         const mrr = profiles.filter(p => new Date(p.created_at) <= dt).reduce((a, p) => a + (TIERS[p.tier]?.price || 0), 0)
         revArr.push({ date: label, mrr: parseFloat(mrr.toFixed(2)), users: active })

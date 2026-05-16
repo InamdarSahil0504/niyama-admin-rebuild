@@ -4,7 +4,7 @@ import { supabase } from '../../supabase.js'
 
 function formatDateTime(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' })
 }
 
 const CRON_JOBS = [

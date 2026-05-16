@@ -48,8 +48,8 @@ export function GlobalSearch({ isOpen, onClose, onNavigate, theme }) {
 
   const allResults = [
     ...results.users.map(u => ({ type: 'user', id: u.id, title: u.full_name || 'Unknown', subtitle: u.email, meta: u.tier, tabId: 'users', raw: u })),
-    ...results.messages.map(m => ({ type: 'message', id: m.id, title: m.body?.slice(0, 60) + (m.body?.length > 60 ? '…' : ''), subtitle: m.profiles?.full_name || m.profiles?.email || 'Unknown', meta: new Date(m.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), tabId: 'messages' })),
-    ...results.events.map(e => ({ type: 'event', id: e.id, title: e.event_type?.replace(/_/g, ' '), subtitle: e.profiles?.full_name || e.profiles?.email || 'Unknown', meta: new Date(e.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), tabId: 'activity' }))
+    ...results.messages.map(m => ({ type: 'message', id: m.id, title: m.body?.slice(0, 60) + (m.body?.length > 60 ? '…' : ''), subtitle: m.profiles?.full_name || m.profiles?.email || 'Unknown', meta: new Date(m.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' }), tabId: 'messages' })),
+    ...results.events.map(e => ({ type: 'event', id: e.id, title: e.event_type?.replace(/_/g, ' '), subtitle: e.profiles?.full_name || e.profiles?.email || 'Unknown', meta: new Date(e.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' }), tabId: 'activity' }))
   ]
 
   useEffect(() => {
