@@ -35,6 +35,7 @@ function HealthKitSection({ C, insight, sectionStyle }) {
   const [hkData, setHkData] = useState(null)
   const [hkLoading, setHkLoading] = useState(true)
   const [hkFilter, setHkFilter] = useState({ ageGroup: 'all', gender: 'all', tier: 'all' })
+  const [consentRate, setConsentRate] = useState(null) // null = column not yet in schema
 
   useEffect(() => {
     const fetch = async () => {
@@ -98,6 +99,20 @@ function HealthKitSection({ C, insight, sectionStyle }) {
         }))
 
         setHkData({ connected, total, connRate, tierRate, hrvByAge, stepsByTier, rhrTrend })
+
+        // Research consent opt-in rate — separate query, isolated try/catch so
+        // a missing schema column never breaks the main HealthKit fetch above.
+        try {
+          const { data: consentData, error: consentErr } = await supabase
+            .from('profiles')
+            .select('research_consent')
+          if (!consentErr && consentData) {
+            const known = consentData.filter(p => p.research_consent != null)
+            const opted = known.filter(p => p.research_consent === true).length
+            setConsentRate(known.length > 0 ? { opted, total: known.length, rate: Math.round((opted / known.length) * 100) } : { opted: 0, total: 0, rate: 0 })
+          }
+          // If consentErr (e.g. column doesn't exist yet), consentRate stays null — rendered as "—"
+        } catch { /* column not in schema yet — silent */ }
       } catch (err) {
         console.error(err)
         setHkData(null)
@@ -149,6 +164,34 @@ function HealthKitSection({ C, insight, sectionStyle }) {
                     <Tooltip formatter={(v, n) => [v, n]} />
                   </PieChart>
                 </ResponsiveContainer>
+              </div>
+              {/* Research consent opt-in rate */}
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>🔬 Research Consent Opt-in</div>
+                  {consentRate == null ? (
+                    <div style={{ fontSize: 13, color: C.textMuted, fontStyle: 'italic' }}>Column not yet in schema</div>
+                  ) : consentRate.total === 0 ? (
+                    <div style={{ fontSize: 13, color: C.textMuted }}>No consent data recorded</div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={{ fontSize: 28, fontWeight: 800, color: consentRate.rate >= 50 ? '#4A7A68' : '#C96A52' }}>{consentRate.rate}%</span>
+                      <span style={{ fontSize: 12, color: C.textMuted }}>{consentRate.opted} of {consentRate.total} users</span>
+                    </div>
+                  )}
+                </div>
+                {consentRate != null && consentRate.total > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 100 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ height: 8, borderRadius: 4, background: '#4A7A68', width: `${consentRate.rate}%`, maxWidth: 80, minWidth: 4 }} />
+                      <span style={{ fontSize: 11, color: '#4A7A68', fontWeight: 600 }}>Opted in</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ height: 8, borderRadius: 4, background: C.border, width: `${100 - consentRate.rate}%`, maxWidth: 80, minWidth: 4 }} />
+                      <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600 }}>Opted out</span>
+                    </div>
+                  </div>
+                )}
               </div>
               <p style={insight}>HealthKit connection enables auto-verified wake, sleep, and steps data — removing the need for manual logging.</p>
             </div>

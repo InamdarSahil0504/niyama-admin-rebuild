@@ -417,6 +417,12 @@ export function UserDetailView({ user, isOpen, onClose, theme, addToast, logAdmi
                   ['Gender', u.gender || 'Not set'],
                   ['Age', u.birth_year ? (new Date().getFullYear() - u.birth_year) : (u.age || 'Not set')],
                   ['HealthKit', u.healthkit_connected ? '🍎 Connected' : '— Not connected'],
+                  ['Research Consent', u.research_consent == null
+                    ? <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 500 }}>Not set</span>
+                    : u.research_consent
+                      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#D1FAE5', color: '#065F46', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✓ Opted in</span>
+                      : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FEE2E2', color: '#991B1B', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✗ Opted out</span>
+                  ],
                   ...(!isMinor ? [['Referrals', u.referral_count || 0]] : [])
                 ].map(([label, val]) => (
                   <div key={label} style={{ padding: 14, background: C.bg, borderRadius: 10 }}>
