@@ -17,6 +17,16 @@ function daysSince(d) {
   return days
 }
 
+// Derive a display status from the actual schema columns
+function deriveStatus(u) {
+  if (u.deleted) return 'churned'
+  if (u.pause_active) return 'inactive'
+  const s = u.subscription_status
+  if (!s || s === 'active' || s === 'trialing') return 'active'
+  if (s === 'canceled' || s === 'past_due' || s === 'unpaid') return 'churned'
+  return 'inactive'
+}
+
 export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction }) {
   const C = theme
   const [users, setUsers] = useState([])
@@ -27,7 +37,7 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
   const [genderFilter, setGenderFilter] = useState('all')
   const [sortCol, setSortCol] = useState('created_at')
   const [sortDir, setSortDir] = useState('desc')
-  const [hkFilter, setHkFilter] = useState('all')
+  // healthkit_connected does not exist in profiles schema — filter omitted
   const [selected, setSelected] = useState(new Set())
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
@@ -39,14 +49,23 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
     setPage(1)
     setLoading(true)
     try {
-      let query = supabase.from('profiles').select('id, full_name, email, tier, status, gender, created_at, last_active_at, points_balance, successful_days_count, streak_days, is_minor, healthkit_connected, research_consent', { count: 'exact' })
+      // Columns use real profiles schema names (verified against DB)
+      let query = supabase.from('profiles').select(
+        'id, full_name, email, tier, subscription_status, pause_active, deleted, gender, created_at, last_active_date, monthly_points, successful_days, is_minor, research_consent',
+        { count: 'exact' }
+      )
       if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
       if (tierFilter !== 'all') query = query.eq('tier', tierFilter)
-      if (statusFilter !== 'all') query = query.eq('status', statusFilter)
+      if (statusFilter === 'active') query = query.eq('deleted', false).eq('pause_active', false).in('subscription_status', ['active', 'trialing'])
+      else if (statusFilter === 'inactive') query = query.eq('pause_active', true)
+      else if (statusFilter === 'churned') query = query.eq('deleted', true)
       if (genderFilter !== 'all') query = query.eq('gender', genderFilter)
-      if (hkFilter === 'connected') query = query.eq('healthkit_connected', true)
-      else if (hkFilter === 'not_connected') query = query.eq('healthkit_connected', false)
-      query = query.order(sortCol, { ascending: sortDir === 'asc' })
+      // Map sortCol UI keys to real DB column names
+      const sortColDB = sortCol === 'monthly_points' ? 'monthly_points'
+        : sortCol === 'successful_days' ? 'successful_days'
+        : sortCol === 'last_active_date' ? 'last_active_date'
+        : sortCol
+      query = query.order(sortColDB, { ascending: sortDir === 'asc' })
       query = query.range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
       const { data, count, error } = await query
       if (error) throw error
@@ -54,12 +73,12 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
       setUsers(data || [])
       setTotalCount(count || 0)
     } catch (err) {
-      console.error(err)
-      addToast('Failed to load users', 'error')
+      console.error('[UsersTab] Supabase error:', err?.message || err?.code || err)
+      addToast(`Failed to load users: ${err?.message || 'unknown error'}`, 'error')
     } finally {
       setLoading(false)
     }
-  }, [search, tierFilter, statusFilter, genderFilter, hkFilter, sortCol, sortDir, page, addToast])
+  }, [search, tierFilter, statusFilter, genderFilter, sortCol, sortDir, page, addToast])
 
   useEffect(() => { fetchUsers() }, [fetchUsers])
 
@@ -83,12 +102,12 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
 
   const exportCSV = () => {
     const selectedUsers = users.filter(u => selected.has(u.id))
-    const headers = ['Name', 'Email', 'Tier', 'Status', 'Points', 'Successful Days', 'Streak', 'Last Active', 'Joined', 'IsMinor', 'MinorDataNote', 'ResearchConsent']
+    const headers = ['Name', 'Email', 'Tier', 'Status', 'Points', 'Successful Days', 'Last Active', 'Joined', 'IsMinor', 'MinorDataNote', 'ResearchConsent']
     const rows = selectedUsers.map(u => [
-      u.full_name || '', u.email || '', u.tier || '', u.status || '',
-      u.is_minor ? 'HIDDEN' : (u.points_balance || 0),
-      u.successful_days_count || 0, u.streak_days || 0,
-      formatDate(u.last_active_at), formatDate(u.created_at),
+      u.full_name || '', u.email || '', u.tier || '', deriveStatus(u),
+      u.is_minor ? 'HIDDEN' : (u.monthly_points || 0),
+      u.successful_days || 0,
+      formatDate(u.last_active_date), formatDate(u.created_at),
       u.is_minor ? 'true' : 'false',
       u.is_minor ? 'Handle under COPPA/GDPR-K' : '',
       u.research_consent === true ? 'true' : u.research_consent === false ? 'false' : ''
@@ -125,12 +144,11 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
   const cols = [
     { key: 'full_name', label: 'Name / Email' },
     { key: 'tier', label: 'Tier' },
-    { key: 'status', label: 'Status' },
-    { key: 'points_balance', label: 'Points' },
-    { key: 'successful_days_count', label: 'Success Days' },
-    { key: 'last_active_at', label: 'Last Active' },
+    { key: '_status', label: 'Status', sortable: false },
+    { key: 'monthly_points', label: 'Points' },
+    { key: 'successful_days', label: 'Success Days' },
+    { key: 'last_active_date', label: 'Last Active' },
     { key: 'created_at', label: 'Joined' },
-    { key: 'healthkit_connected', label: 'HealthKit', sortable: false },
     { key: 'research_consent', label: 'Research', sortable: false },
   ]
 
@@ -163,11 +181,7 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
           <option value="female">Female</option>
           <option value="other">Other</option>
         </select>
-        <select value={hkFilter} onChange={e => { setHkFilter(e.target.value); setPage(1) }} style={selectStyle}>
-          <option value="all">All HealthKit</option>
-          <option value="connected">🍎 Connected</option>
-          <option value="not_connected">— Not Connected</option>
-        </select>
+        {/* HealthKit filter removed — healthkit_connected column not in profiles schema */}
       </div>
 
       {/* Bulk action bar */}
@@ -207,7 +221,7 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
               ) : users.length === 0 ? (
                 <tr><td colSpan={cols.length + 2} style={{ padding: 40, textAlign: 'center', color: C.textMuted }}>No users found matching your filters</td></tr>
               ) : users.map(u => {
-                const inactiveDays = daysSince(u.last_active_at)
+                const inactiveDays = daysSince(u.last_active_date)
                 const minorBg = '#FFFBEB'
                 return (
                   <tr
@@ -233,18 +247,13 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
                       </div>
                     </td>
                     <td style={{ padding: '12px 14px' }}><TierBadge tier={u.tier} /></td>
-                    <td style={{ padding: '12px 14px' }}><StatusDot status={u.status} showLabel /></td>
-                    <td style={{ padding: '12px 14px', color: C.text }}>{(u.points_balance || 0).toLocaleString()}</td>
-                    <td style={{ padding: '12px 14px', color: C.text }}>{u.successful_days_count || 0}</td>
+                    <td style={{ padding: '12px 14px' }}><StatusDot status={deriveStatus(u)} showLabel /></td>
+                    <td style={{ padding: '12px 14px', color: C.text }}>{(u.monthly_points || 0).toLocaleString()}</td>
+                    <td style={{ padding: '12px 14px', color: C.text }}>{u.successful_days || 0}</td>
                     <td style={{ padding: '12px 14px', color: typeof inactiveDays === 'number' && inactiveDays > 14 ? '#EF4444' : C.textMuted }}>
                       {typeof inactiveDays === 'number' ? `${inactiveDays}d ago` : '—'}
                     </td>
                     <td style={{ padding: '12px 14px', color: C.textMuted }}>{formatDate(u.created_at)}</td>
-                    <td style={{ padding: '12px 14px', textAlign: 'center' }}>
-                      {u.healthkit_connected
-                        ? <span title="HealthKit connected" style={{ fontSize: 16 }}>🍎</span>
-                        : <span style={{ color: C.border, fontSize: 14 }}>—</span>}
-                    </td>
                     <td style={{ padding: '12px 14px', textAlign: 'center' }}>
                       {u.research_consent === true
                         ? <span title="Research consent given" style={{ fontSize: 16, color: '#10B981' }}>🔬</span>
