@@ -2,13 +2,17 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../../supabase.js'
 import { TierBadge } from './TierBadge.jsx'
 import { StatusDot } from './StatusDot.jsx'
-import { TIERS, getHabitLabel } from '../../config.js'
+import { TIERS, ALL_HABITS, getHabitLabel } from '../../config.js'
 
 function formatDate(d) {
   if (!d) return 'N/A'
-  // Date-only strings (YYYY-MM-DD) must be parsed as local midnight to avoid UTC offset shifting the date backward
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? new Date(d + 'T00:00:00') : new Date(d)
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
+}
+function formatDateShort(d) {
+  if (!d) return '—'
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? new Date(d + 'T00:00:00') : new Date(d)
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 function formatMoney(n) {
   if (n == null) return '$0.00'
@@ -30,48 +34,43 @@ function FraudScoreCircle({ score }) {
   )
 }
 
-function HabitHeatmap({ userId, C }) {
-  const [days, setDays] = useState([])
-  useEffect(() => {
-    if (!userId) return
-    const fetchData = async () => {
-      const end = new Date(), start = new Date()
-      start.setDate(start.getDate() - 34)
-      try {
-        const { data } = await supabase.from('daily_summaries').select('date, total_points').eq('user_id', userId)
-          .gte('date', start.toISOString().split('T')[0]).lte('date', end.toISOString().split('T')[0])
-        const map = {}
-        if (data) data.forEach(d => { map[d.date] = d.total_points || 0 })
-        const arr = []
-        for (let i = 34; i >= 0; i--) {
-          const d = new Date(); d.setDate(d.getDate() - i)
-          const key = d.toISOString().split('T')[0]
-          arr.push({ date: key, points: map[key] || 0 })
-        }
-        setDays(arr)
-      } catch { setDays([]) }
-    }
-    fetchData()
-  }, [userId])
-
-  const maxPoints = Math.max(...days.map(d => d.points), 1)
+// 30-day calendar heatmap: green=successful, gold=perfect, red=submitted+failed, grey=no entry
+function DayCalendar({ summaries, C }) {
+  const today = new Date()
+  const days = []
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today); d.setDate(d.getDate() - i)
+    const key = d.toISOString().split('T')[0]
+    const s = summaries.find(x => x.date === key)
+    days.push({ date: key, s })
+  }
+  const getColor = (s) => {
+    if (!s || !s.submitted) return C.border
+    if (s.perfect_day) return '#C9973A'
+    if (s.day_successful) return '#4A7A68'
+    return '#EF4444'
+  }
+  const labels = [
+    { color: '#C9973A', label: 'Perfect day' },
+    { color: '#4A7A68', label: 'Successful' },
+    { color: '#EF4444', label: 'Not successful' },
+    { color: C.border, label: 'No entry' }
+  ]
   return (
     <div>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: C.text }}>30-Day Activity</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3 }}>
-        {days.map(d => {
-          const intensity = d.points / maxPoints
-          const green = Math.round(intensity * 180) + 75
-          const bg = d.points > 0 ? `rgb(74, ${green}, 104)` : C.border
-          return <div key={d.date} title={`${d.date}: ${d.points} pts`} style={{ width: '100%', paddingTop: '100%', borderRadius: 3, background: bg }} />
-        })}
-      </div>
-      <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }}>
-        <span style={{ fontSize: 11, color: C.textMuted }}>Less</span>
-        {[0, 0.25, 0.5, 0.75, 1].map(v => (
-          <div key={v} style={{ width: 12, height: 12, borderRadius: 2, background: v === 0 ? C.border : `rgb(74, ${Math.round(v * 180) + 75}, 104)` }} />
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        {days.map(({ date, s }) => (
+          <div key={date} title={`${date}${s ? ` — ${s.total_points || 0} pts${s.day_successful ? ' ✓' : ''}${s.perfect_day ? ' ⭐' : ''}` : ' — no entry'}`}
+            style={{ width: 22, height: 22, borderRadius: 4, background: getColor(s) }} />
         ))}
-        <span style={{ fontSize: 11, color: C.textMuted }}>More</span>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, color: C.textMuted, flexWrap: 'wrap' }}>
+        {labels.map(l => (
+          <span key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 2, background: l.color, display: 'inline-block', flexShrink: 0 }} />
+            {l.label}
+          </span>
+        ))}
       </div>
     </div>
   )
@@ -92,21 +91,37 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
   const [messages, setMessages] = useState([])
   const [notes, setNotes] = useState([])
   const [fraudData, setFraudData] = useState(null)
-  const [habits, setHabits] = useState([])
+  const [todayHabits, setTodayHabits] = useState([])
   const [customHabits, setCustomHabits] = useState([])
-  const [replyText, setReplyText] = useState('')
-  const [noteText, setNoteText] = useState('')
-  const [deleteStep, setDeleteStep] = useState(0)
-  const [deleteTyped, setDeleteTyped] = useState('')
+  const [monthStats, setMonthStats] = useState(null)
   const [loading, setLoading] = useState(false)
 
-  // Editable profile state
+  // Analytics tab state
+  const [analyticsData, setAnalyticsData] = useState(null)
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
+
+  // History tab state
+  const [historyData, setHistoryData] = useState([])
+  const [historyPage, setHistoryPage] = useState(1)
+  const [historyTotal, setHistoryTotal] = useState(0)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const HISTORY_PER_PAGE = 30
+
+  // Edit form state
   const [isEditing, setIsEditing] = useState(false)
   const [editForm, setEditForm] = useState({ full_name: '', date_of_birth: '', phone: '', region: '' })
   const [editSaving, setEditSaving] = useState(false)
 
-  // Action modal state
-  const [actionModal, setActionModal] = useState(null) // { type: 'bonus'|'deduct'|'freeze'|'reward'|'message' }
+  // Reply / notes
+  const [replyText, setReplyText] = useState('')
+  const [noteText, setNoteText] = useState('')
+
+  // Delete flow
+  const [deleteStep, setDeleteStep] = useState(0)
+  const [deleteTyped, setDeleteTyped] = useState('')
+
+  // Action modals
+  const [actionModal, setActionModal] = useState(null)
   const [actionAmount, setActionAmount] = useState('')
   const [actionReason, setActionReason] = useState('')
   const [actionDays, setActionDays] = useState('')
@@ -115,20 +130,27 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
 
   const C = theme
 
+  // ─── Fetch core data ───────────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     if (!user) return
     setLoading(true)
     try {
-      const [profileRes, rewardsRes, messagesRes, notesRes, fraudRes, habitsRes, customHabitsRes] = await Promise.all([
+      const today = new Date().toISOString().split('T')[0]
+      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+
+      const [profileRes, rewardsRes, messagesRes, notesRes, fraudRes, habitsRes, customHabitsRes, monthRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('rewards').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(20),
         supabase.from('contact_messages').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
         supabase.from('admin_notes').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(20),
         supabase.from('fraud_risk_scores').select('*').eq('user_id', user.id).single(),
-        supabase.from('habit_logs').select('id, habit_key, completed, points_earned, habit_type, photo_url, logged_at').eq('user_id', user.id)
-          .eq('date', new Date().toISOString().split('T')[0]).eq('completed', true).order('logged_at', { ascending: false }),
-        supabase.from('custom_habits').select('id, name, emoji, created_at, is_active').eq('user_id', user.id).order('created_at', { ascending: false })
+        supabase.from('habit_logs')
+          .select('id, habit_key, completed, points_earned, habit_type, photo_url, logged_at')
+          .eq('user_id', user.id).eq('date', today).eq('completed', true).order('logged_at', { ascending: false }),
+        supabase.from('custom_habits').select('id, name, emoji, created_at, is_active').eq('user_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('daily_summaries').select('total_points, day_successful, total_completed').eq('user_id', user.id).gte('date', monthStart)
       ])
+
       const profile = profileRes.data || user
       setUserDetails(profile)
       setEditForm({
@@ -141,8 +163,16 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       setMessages(messagesRes.data || [])
       setNotes(notesRes.data || [])
       setFraudData(fraudRes.data || null)
-      setHabits(habitsRes.data || [])
+      setTodayHabits(habitsRes.data || [])
       setCustomHabits(customHabitsRes.data || [])
+
+      const monthSummaries = monthRes.data || []
+      setMonthStats({
+        totalPoints: monthSummaries.reduce((a, s) => a + (s.total_points || 0), 0),
+        successDays: monthSummaries.filter(s => s.day_successful).length,
+        daysLogged: monthSummaries.length,
+        habitsLogged: monthSummaries.reduce((a, s) => a + (s.total_completed || 0), 0)
+      })
     } catch {
       setUserDetails(user)
     } finally {
@@ -150,10 +180,69 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
     }
   }, [user])
 
+  // ─── Fetch analytics (lazy — only when tab opens) ─────────────────────────
+  const fetchAnalytics = useCallback(async () => {
+    if (!user) return
+    setAnalyticsLoading(true)
+    try {
+      const thirtyAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
+      const [summariesRes, logsRes] = await Promise.all([
+        supabase.from('daily_summaries')
+          .select('date, day_successful, perfect_day, submitted, total_points, total_completed')
+          .eq('user_id', user.id).gte('date', thirtyAgo).order('date', { ascending: false }),
+        supabase.from('habit_logs')
+          .select('habit_key, date, points_earned')
+          .eq('user_id', user.id).gte('date', thirtyAgo).eq('completed', true)
+      ])
+      setAnalyticsData({ summaries: summariesRes.data || [], logs: logsRes.data || [] })
+    } catch {
+      setAnalyticsData({ summaries: [], logs: [] })
+    } finally {
+      setAnalyticsLoading(false)
+    }
+  }, [user])
+
+  // ─── Fetch history (paginated) ─────────────────────────────────────────────
+  const fetchHistory = useCallback(async () => {
+    if (!user) return
+    setHistoryLoading(true)
+    try {
+      const { data, count } = await supabase.from('daily_summaries')
+        .select('date, total_completed, total_points, day_successful, perfect_day, submitted', { count: 'exact' })
+        .eq('user_id', user.id)
+        .order('date', { ascending: false })
+        .range((historyPage - 1) * HISTORY_PER_PAGE, historyPage * HISTORY_PER_PAGE - 1)
+      setHistoryData(data || [])
+      setHistoryTotal(count || 0)
+    } catch {
+      setHistoryData([])
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [user, historyPage])
+
   useEffect(() => {
-    if (isOpen && user) { fetchAll(); setActiveTab('overview'); setDeleteStep(0); setActionModal(null); setIsEditing(false) }
+    if (isOpen && user) {
+      fetchAll()
+      setActiveTab('overview')
+      setDeleteStep(0)
+      setActionModal(null)
+      setIsEditing(false)
+      setHistoryPage(1)
+      setAnalyticsData(null)
+      setHistoryData([])
+    }
   }, [isOpen, user, fetchAll])
 
+  useEffect(() => {
+    if (isOpen && user && activeTab === 'analytics') fetchAnalytics()
+  }, [isOpen, user, activeTab, fetchAnalytics])
+
+  useEffect(() => {
+    if (isOpen && user && activeTab === 'history') fetchHistory()
+  }, [isOpen, user, activeTab, historyPage, fetchHistory])
+
+  // ─── Actions ───────────────────────────────────────────────────────────────
   const sendReply = async () => {
     if (!replyText.trim()) return
     try {
@@ -217,7 +306,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Admin bonus: +${pts} points. Reason: ${actionReason}`, type: 'bonus_points', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       setUserDetails(prev => ({ ...prev, monthly_points: newBalance }))
       addToast(`+${pts} bonus points added`, 'success')
-      logAdminAction('bonus_points', { userId: user.id, email: user.email, points: pts, reason: actionReason })
+      logAdminAction('bonus_points', { userId: user.id, points: pts, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
       onUserUpdated?.()
     } catch { addToast('Failed to add points', 'error') }
@@ -234,7 +323,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Admin deduction: -${pts} points. Reason: ${actionReason}`, type: 'deduct_points', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       setUserDetails(prev => ({ ...prev, monthly_points: newBalance }))
       addToast(`-${pts} points deducted`, 'warning')
-      logAdminAction('deduct_points', { userId: user.id, email: user.email, points: pts, reason: actionReason })
+      logAdminAction('deduct_points', { userId: user.id, points: pts, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
       onUserUpdated?.()
     } catch { addToast('Failed to deduct points', 'error') }
@@ -248,9 +337,8 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       await supabase.from('profiles').update({ freeze_used_this_month: true }).eq('id', user.id)
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Streak freeze applied for ${actionDays} days. Reason: ${actionReason}`, type: 'streak_freeze', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       addToast(`Streak frozen for ${actionDays} days`, 'success')
-      logAdminAction('streak_freeze', { userId: user.id, email: user.email, days: actionDays, reason: actionReason })
+      logAdminAction('streak_freeze', { userId: user.id, days: actionDays })
       setActionModal(null); setActionDays(''); setActionReason('')
-      onUserUpdated?.()
     } catch { addToast('Failed to freeze streak', 'error') }
     setActionLoading(false)
   }
@@ -262,7 +350,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       await supabase.from('contact_messages').insert({ user_id: user.id, body: actionMsg, is_admin_reply: true, created_at: new Date().toISOString() })
       setMessages(prev => [{ body: actionMsg, is_admin_reply: true, created_at: new Date().toISOString(), id: Date.now() }, ...prev])
       addToast('Message sent', 'success')
-      logAdminAction('direct_message', { userId: user.id, email: user.email })
+      logAdminAction('direct_message', { userId: user.id })
       setActionModal(null); setActionMsg('')
     } catch { addToast('Failed to send message', 'error') }
     setActionLoading(false)
@@ -276,7 +364,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       await supabase.from('rewards').insert({ user_id: user.id, amount, status: 'pending', type: 'manual', note: actionReason, created_at: new Date().toISOString() })
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Manual reward issued: ${formatMoney(amount)}. Reason: ${actionReason}`, type: 'manual_reward', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       addToast(`Manual reward ${formatMoney(amount)} issued`, 'success')
-      logAdminAction('manual_reward', { userId: user.id, email: user.email, amount, reason: actionReason })
+      logAdminAction('manual_reward', { userId: user.id, amount, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
       onUserUpdated?.()
     } catch { addToast('Failed to issue reward', 'error') }
@@ -288,9 +376,8 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       await supabase.from('fraud_risk_scores').upsert({ user_id: user.id, score: 70, admin_flagged: true, created_at: new Date().toISOString() })
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Manually flagged for fraud review`, type: 'fraud_flag', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       addToast('User flagged for fraud review', 'warning')
-      logAdminAction('fraud_flag', { userId: user.id, email: user.email })
-      fetchAll()
-      onUserUpdated?.()
+      logAdminAction('fraud_flag', { userId: user.id })
+      fetchAll(); onUserUpdated?.()
     } catch { addToast('Failed to flag user', 'error') }
   }
 
@@ -299,48 +386,54 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       await supabase.from('fraud_risk_scores').update({ score: 0, admin_flagged: false }).eq('user_id', user.id)
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Fraud flag cleared by admin`, type: 'fraud_clear', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       addToast('Fraud flag cleared', 'success')
-      logAdminAction('fraud_clear', { userId: user.id, email: user.email })
-      fetchAll()
-      onUserUpdated?.()
+      logAdminAction('fraud_clear', { userId: user.id })
+      fetchAll(); onUserUpdated?.()
     } catch { addToast('Failed to clear flag', 'error') }
   }
 
   const saveProfileEdit = async () => {
     setEditSaving(true)
+    const savedFields = []
     try {
-      // Save confirmed core fields first (full_name, date_of_birth, region are known to exist)
-      const corePayload = {
-        full_name: editForm.full_name || null,
-        date_of_birth: editForm.date_of_birth || null,
-        region: editForm.region || null
+      // Step 1: Save confirmed-existing fields (full_name, date_of_birth)
+      const nameAndDob = {
+        full_name: editForm.full_name?.trim() || null,
+        date_of_birth: editForm.date_of_birth || null  // HTML date input always gives YYYY-MM-DD
       }
-      const { error: coreError } = await supabase.from('profiles').update(corePayload).eq('id', user.id)
-      if (coreError) throw coreError
+      console.log('[saveProfileEdit] payload:', nameAndDob, 'user_id:', user.id)
+      const { error: err1 } = await supabase.from('profiles').update(nameAndDob).eq('id', user.id)
+      if (err1) { console.error('[saveProfileEdit] nameAndDob error:', err1); throw err1 }
+      if (editForm.full_name?.trim() !== (userDetails?.full_name || '')) savedFields.push('full_name')
+      if (editForm.date_of_birth !== (userDetails?.date_of_birth || '')) savedFields.push('date_of_birth')
 
-      // Phone is stored if the column exists; ignore silently if not
+      // Step 2: region (silent if column missing)
+      if (editForm.region !== undefined) {
+        const { error: err2 } = await supabase.from('profiles').update({ region: editForm.region || null }).eq('id', user.id)
+        if (err2) console.warn('[saveProfileEdit] region:', err2.message)
+        else if (editForm.region !== (userDetails?.region || '')) savedFields.push('region')
+      }
+
+      // Step 3: phone (silent if column missing)
       if (editForm.phone !== undefined) {
-        await supabase.from('profiles').update({ phone: editForm.phone || null }).eq('id', user.id).then(
-          ({ error }) => { if (error) console.warn('[saveProfileEdit] phone column may not exist:', error.message) }
-        )
+        const { error: err3 } = await supabase.from('profiles').update({ phone: editForm.phone || null }).eq('id', user.id)
+        if (err3) console.warn('[saveProfileEdit] phone:', err3.message)
+        else if (editForm.phone !== (userDetails?.phone || '')) savedFields.push('phone')
       }
 
-      const savedFields = Object.keys(corePayload).filter(k => editForm[k] !== (userDetails?.[k] || ''))
-      if (editForm.phone) savedFields.push('phone')
       await supabase.from('admin_notes').insert({
         user_id: user.id,
-        note: `[AUDIT] Admin updated profile fields: ${savedFields.join(', ') || 'no changes'}`,
+        note: `[AUDIT] Admin updated: ${savedFields.join(', ') || 'no changes'}`,
         type: 'profile_edit',
         created_at: new Date().toISOString(),
         admin: import.meta.env.VITE_ADMIN_EMAIL
       })
       addToast('Profile updated', 'success')
-      logAdminAction('profile_edit', { userId: user.id, email: user.email, fields: savedFields })
+      logAdminAction('profile_edit', { userId: user.id, fields: savedFields })
       setIsEditing(false)
-      fetchAll()
-      onUserUpdated?.()
+      fetchAll(); onUserUpdated?.()
     } catch (err) {
       addToast('Failed to save profile', 'error')
-      console.error('[saveProfileEdit] error:', err)
+      console.error('[saveProfileEdit] fatal:', err)
     }
     setEditSaving(false)
   }
@@ -349,16 +442,26 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
 
   const u = userDetails || user
   const initials = (u.full_name || u.email || '?').split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2)
-  const tabs = ['overview', 'habits', 'rewards', 'messages', 'notes', 'fraud', 'actions']
   const fraudScore = fraudData?.score || u.fraud_score || 0
   const fraudColor = fraudScore >= 70 ? '#EF4444' : fraudScore >= 40 ? '#F97316' : fraudScore >= 20 ? '#EAB308' : '#6B7280'
   const isMinor = u.is_minor || false
+
+  const derivedStatus = (() => {
+    if (u.deleted) return 'churned'
+    if (u.pause_active) return 'inactive'
+    const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
+    return (u.last_active_date && u.last_active_date >= sevenAgo) ? 'active' : 'churned'
+  })()
 
   const inputStyle = { width: '100%', padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, background: C.bg, color: C.text, outline: 'none', fontFamily: 'Inter, sans-serif', boxSizing: 'border-box' }
   const btnPrimary = { padding: '8px 14px', background: '#4A7A68', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
   const btnDanger = { padding: '8px 14px', background: '#FEE2E2', color: '#EF4444', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
   const btnGhost = { padding: '8px 14px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, cursor: 'pointer', color: C.text }
+  const card = { padding: 14, background: C.bg, borderRadius: 10 }
 
+  const tabs = ['overview', 'analytics', 'history', 'rewards', 'messages', 'notes']
+
+  // ─── Action Modal ──────────────────────────────────────────────────────────
   const ActionModal = () => {
     if (!actionModal) return null
     const configs = {
@@ -397,8 +500,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                   <label style={{ fontSize: 12, color: C.textMuted, display: 'block', marginBottom: 4, fontWeight: 500 }}>{f.label}</label>
                   {f.multiline
                     ? <textarea value={f.value} onChange={f.onChange} placeholder={f.placeholder} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
-                    : <input type={f.type || 'text'} value={f.value} onChange={f.onChange} placeholder={f.placeholder} style={inputStyle} />
-                  }
+                    : <input type={f.type || 'text'} value={f.value} onChange={f.onChange} placeholder={f.placeholder} style={inputStyle} />}
                 </div>
               ))}
             </div>
@@ -416,14 +518,15 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
     )
   }
 
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <>
       <ActionModal />
       <div style={{ position: 'fixed', inset: 0, zIndex: 800, pointerEvents: 'none' }}>
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', pointerEvents: 'auto' }} onClick={onClose} />
-        <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 600, background: C.card, boxShadow: '-8px 0 40px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', pointerEvents: 'auto', overflowY: 'auto' }}>
+        <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 640, background: C.card, boxShadow: '-8px 0 40px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', pointerEvents: 'auto', overflowY: 'auto' }}>
 
-          {/* Minor user banner */}
+          {/* Minor banner */}
           {isMinor && (
             <div style={{ background: '#FEF3C7', borderBottom: '2px solid #F59E0B', padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
               <span style={{ fontSize: 18 }}>⚠️</span>
@@ -445,12 +548,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                   <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>{u.full_name || 'Unknown'}</h3>
                   {isMinor && <span style={{ background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, border: '1px solid #F59E0B' }}>⚠ MINOR</span>}
                   <TierBadge tier={u.tier} />
-                  <StatusDot status={(() => {
-                    if (u.deleted) return 'churned'
-                    if (u.pause_active) return 'inactive'
-                    const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
-                    return (u.last_active_date && u.last_active_date >= sevenAgo) ? 'active' : 'churned'
-                  })()} showLabel />
+                  <StatusDot status={derivedStatus} showLabel />
                 </div>
                 <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>{u.email}</div>
               </div>
@@ -459,6 +557,8 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                 <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: C.textMuted, padding: '0 4px' }}>×</button>
               </div>
             </div>
+
+            {/* Tab bar */}
             <div style={{ display: 'flex', gap: 2, marginTop: 16, borderBottom: `1px solid ${C.border}`, marginBottom: -17 }}>
               {tabs.map(tab => (
                 <button key={tab} onClick={() => setActiveTab(tab)} style={{
@@ -472,10 +572,11 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
           </div>
 
           {/* Content */}
-          <div style={{ padding: 24, flex: 1 }}>
+          <div style={{ padding: 24, flex: 1, overflowY: 'auto' }}>
+
+            {/* ── OVERVIEW ── */}
             {activeTab === 'overview' && (
               <div>
-                {/* Edit button row */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
                   {!isEditing ? (
                     <button onClick={() => setIsEditing(true)} style={{ padding: '7px 14px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, cursor: 'pointer', color: C.text, fontWeight: 500 }}>
@@ -483,38 +584,27 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                     </button>
                   ) : (
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <button onClick={() => { setIsEditing(false); setEditForm({ full_name: u.full_name || '', date_of_birth: u.date_of_birth || '', phone: u.phone || '', region: u.region || '' }) }} style={{ padding: '7px 14px', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, cursor: 'pointer', color: C.text }}>Cancel</button>
-                      <button onClick={saveProfileEdit} disabled={editSaving} style={{ padding: '7px 14px', background: '#4A7A68', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: editSaving ? 'not-allowed' : 'pointer', opacity: editSaving ? 0.7 : 1 }}>{editSaving ? 'Saving...' : 'Save Changes'}</button>
+                      <button onClick={() => { setIsEditing(false); setEditForm({ full_name: u.full_name || '', date_of_birth: u.date_of_birth || '', phone: u.phone || '', region: u.region || '' }) }} style={btnGhost}>Cancel</button>
+                      <button onClick={saveProfileEdit} disabled={editSaving} style={{ ...btnPrimary, opacity: editSaving ? 0.7 : 1, cursor: editSaving ? 'not-allowed' : 'pointer' }}>{editSaving ? 'Saving...' : 'Save Changes'}</button>
                     </div>
                   )}
                 </div>
 
                 {isEditing ? (
-                  /* Edit form — only the 4 editable fields */
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
                     {[
                       { label: 'Full Name', field: 'full_name', type: 'text', placeholder: 'Jane Smith' },
                       { label: 'Date of Birth', field: 'date_of_birth', type: 'date', placeholder: '' },
-                      { label: 'Phone Number', field: 'phone', type: 'text', placeholder: '+1 555 000 0000' },
+                      { label: 'Phone Number', field: 'phone', type: 'text', placeholder: '+1 555 000 0000' }
                     ].map(({ label, field, type, placeholder }) => (
                       <div key={field}>
                         <label style={{ fontSize: 12, color: C.textMuted, fontWeight: 600, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</label>
-                        <input
-                          type={type}
-                          value={editForm[field]}
-                          onChange={e => setEditForm(prev => ({ ...prev, [field]: e.target.value }))}
-                          placeholder={placeholder}
-                          style={{ width: '100%', padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, background: C.bg, color: C.text, outline: 'none', fontFamily: 'Inter, sans-serif', boxSizing: 'border-box' }}
-                        />
+                        <input type={type} value={editForm[field]} onChange={e => setEditForm(prev => ({ ...prev, [field]: e.target.value }))} placeholder={placeholder} style={{ width: '100%', padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, background: C.bg, color: C.text, outline: 'none', fontFamily: 'Inter, sans-serif', boxSizing: 'border-box' }} />
                       </div>
                     ))}
                     <div>
                       <label style={{ fontSize: 12, color: C.textMuted, fontWeight: 600, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: 0.5 }}>Region</label>
-                      <select
-                        value={editForm.region}
-                        onChange={e => setEditForm(prev => ({ ...prev, region: e.target.value }))}
-                        style={{ width: '100%', padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, background: C.bg, color: C.text, outline: 'none', fontFamily: 'Inter, sans-serif', cursor: 'pointer' }}
-                      >
+                      <select value={editForm.region} onChange={e => setEditForm(prev => ({ ...prev, region: e.target.value }))} style={{ width: '100%', padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, background: C.bg, color: C.text, outline: 'none', fontFamily: 'Inter, sans-serif', cursor: 'pointer' }}>
                         <option value="">— Not set</option>
                         <option value="USA">USA</option>
                         <option value="India">India</option>
@@ -522,100 +612,193 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                     </div>
                   </div>
                 ) : (
-                  /* Read-only view — all fields */
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  /* Profile card */
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>
                     {[
                       ['Joined', formatDate(u.created_at)],
-                      ['Last Active', formatDate(u.last_active_date || u.updated_at)],
-                      ['Monthly Points', (u.monthly_points || 0).toLocaleString()],
-                      ['Successful Days', u.successful_days || 0],
-                      ['Gender', u.gender || 'Not set'],
-                      ['Age', u.date_of_birth ? (new Date().getFullYear() - new Date(u.date_of_birth + 'T00:00:00').getFullYear()) : (u.age || 'Not set')],
-                      ['Research Consent', u.research_consent == null
-                        ? <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 500 }}>Not set</span>
-                        : u.research_consent
-                          ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#D1FAE5', color: '#065F46', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✓ Opted in</span>
-                          : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FEE2E2', color: '#991B1B', padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>✗ Opted out</span>
-                      ],
-                      ...(!isMinor ? [['Referral Code', u.referral_code || '—']] : []),
-                      ['Full Name', u.full_name || '—'],
+                      ['Last Active', u.last_active_date ? formatDate(u.last_active_date) : '—'],
                       ['Date of Birth', u.date_of_birth ? formatDate(u.date_of_birth) : '—'],
-                      ['Phone', u.phone || '—'],
+                      ['Age', u.date_of_birth ? (new Date().getFullYear() - new Date(u.date_of_birth + 'T00:00:00').getFullYear()) + ' yrs' : (u.age ? u.age + ' yrs' : '—')],
+                      ['Gender', u.gender || '—'],
                       ['Region', u.region || '—'],
+                      ['Phone', u.phone || '—'],
+                      ...(!isMinor ? [['Referral Code', u.referral_code || '—']] : []),
+                      ['Research Consent', u.research_consent == null ? '—' : u.research_consent ? '✓ Opted in' : '✗ Opted out'],
+                      ['Freeze Available', u.freeze_available ? 'Yes' : 'No'],
+                      ['Freeze Used', u.freeze_used_this_month ? 'Yes (this month)' : 'No'],
                     ].map(([label, val]) => (
-                      <div key={label} style={{ padding: 14, background: C.bg, borderRadius: 10 }}>
+                      <div key={label} style={card}>
                         <div style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
-                        <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{val}</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{val}</div>
                       </div>
                     ))}
                   </div>
                 )}
-              </div>
-            )}
 
-            {activeTab === 'habits' && (
-              <div>
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 10 }}>Today's Habits</div>
-                  {habits.length === 0 ? (
-                    <div style={{ color: C.textMuted, fontSize: 13 }}>No habits logged today</div>
-                  ) : habits.map(h => (
+                {/* This month stats */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>This Month</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                    {[
+                      ['Points', monthStats ? monthStats.totalPoints.toLocaleString() : '—'],
+                      ['Successful Days', monthStats ? monthStats.successDays : '—'],
+                      ['Days Logged', monthStats ? monthStats.daysLogged : '—'],
+                      ['Habits Logged', monthStats ? monthStats.habitsLogged : '—'],
+                      ['Monthly Points (profile)', (u.monthly_points || 0).toLocaleString()],
+                      ['Total Successful (profile)', u.successful_days || 0]
+                    ].map(([label, val]) => (
+                      <div key={label} style={{ ...card, textAlign: 'center' }}>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: '#4A7A68' }}>{val}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Today's habits */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Today's Habits</div>
+                  {todayHabits.length === 0 ? (
+                    <div style={{ color: C.textMuted, fontSize: 13 }}>No habits completed today</div>
+                  ) : todayHabits.map(h => (
                     <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
                       <span style={{ color: '#10B981', fontSize: 16 }}>✓</span>
                       <span style={{ fontSize: 14, color: C.text, flex: 1 }}>{getHabitLabel(h.habit_key)}</span>
                       <span style={{ fontSize: 12, color: C.textMuted }}>{h.points_earned} pts</span>
-                      {h.photo_url && <span style={{ fontSize: 11, background: '#EFF6FF', color: '#3B82F6', padding: '1px 6px', borderRadius: 6 }}>📷 Photo</span>}
+                      {h.photo_url && <span style={{ fontSize: 11, background: '#EFF6FF', color: '#3B82F6', padding: '1px 6px', borderRadius: 6 }}>📷</span>}
                     </div>
                   ))}
-                </div>
-                <HabitHeatmap userId={u.id} C={C} />
-
-                <div style={{ marginTop: 24, paddingTop: 20, borderTop: `1px solid ${C.border}` }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Custom Habits</div>
-                    <span style={{ fontSize: 11, fontWeight: 600, background: '#EFF6FF', color: '#3B82F6', padding: '1px 7px', borderRadius: 10 }}>
-                      {customHabits.length}
-                    </span>
-                  </div>
-                  {customHabits.length === 0 ? (
-                    <div style={{ fontSize: 13, color: C.textMuted }}>No custom habits created</div>
-                  ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                      <thead>
-                        <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                          {['Habit', 'Created', 'Status'].map(h => (
-                            <th key={h} style={{ padding: '6px 8px', textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 11 }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {customHabits.map(h => (
-                          <tr key={h.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                            <td style={{ padding: '9px 8px' }}>
-                              <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                                <span style={{ fontSize: 18, lineHeight: 1 }}>{h.emoji || '⭐'}</span>
-                                <span style={{ color: C.text, fontWeight: 500 }}>{h.name}</span>
-                              </span>
-                            </td>
-                            <td style={{ padding: '9px 8px', color: C.textMuted }}>{formatDate(h.created_at)}</td>
-                            <td style={{ padding: '9px 8px' }}>
-                              <span style={{
-                                padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600,
-                                background: h.is_active ? '#D1FAE5' : '#F3F4F6',
-                                color: h.is_active ? '#065F46' : '#6B7280'
-                              }}>
-                                {h.is_active ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
                 </div>
               </div>
             )}
 
+            {/* ── ANALYTICS ── */}
+            {activeTab === 'analytics' && (
+              <div>
+                {analyticsLoading ? (
+                  <div style={{ color: C.textMuted, fontSize: 13, padding: '40px 0', textAlign: 'center' }}>Loading analytics...</div>
+                ) : !analyticsData ? null : (
+                  <>
+                    {/* 30-day calendar heatmap */}
+                    <div style={{ marginBottom: 24 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>30-Day Calendar</div>
+                      <DayCalendar summaries={analyticsData.summaries} C={C} />
+                    </div>
+
+                    {/* Per-habit completion rate */}
+                    <div style={{ marginBottom: 24 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Habit Completion Rate (last 30 days)</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {ALL_HABITS.map(habit => {
+                          const count = analyticsData.logs.filter(l => l.habit_key === habit.id).length
+                          const pct = Math.min(Math.round((count / 30) * 100), 100)
+                          return (
+                            <div key={habit.id}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                <span style={{ fontSize: 13, color: C.text }}>{getHabitLabel(habit.id)}</span>
+                                <span style={{ fontSize: 12, color: C.textMuted }}>{count}/30 ({pct}%)</span>
+                              </div>
+                              <div style={{ height: 8, background: C.border, borderRadius: 4, overflow: 'hidden' }}>
+                                <div style={{ height: '100%', width: `${pct}%`, background: habit.category === 'core' ? '#4A7A68' : '#C9973A', borderRadius: 4, transition: 'width 0.4s' }} />
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <div style={{ display: 'flex', gap: 12, marginTop: 10, fontSize: 11, color: C.textMuted }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: '#4A7A68', display: 'inline-block' }} /> Core habits</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: '#C9973A', display: 'inline-block' }} /> Library habits</span>
+                      </div>
+                    </div>
+
+                    {/* Last 7 days table */}
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Last 7 Days</div>
+                      {analyticsData.summaries.length === 0 ? (
+                        <div style={{ color: C.textMuted, fontSize: 13 }}>No data in the last 30 days</div>
+                      ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                          <thead>
+                            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                              {['Date', 'Habits', 'Points', 'Successful', 'Perfect'].map(h => (
+                                <th key={h} style={{ padding: '8px', textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 11 }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {analyticsData.summaries.slice(0, 7).map(s => (
+                              <tr key={s.date} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                <td style={{ padding: '9px 8px', color: C.text }}>{formatDateShort(s.date)}</td>
+                                <td style={{ padding: '9px 8px', color: C.text }}>{s.total_completed || 0}</td>
+                                <td style={{ padding: '9px 8px', color: C.text }}>{s.total_points || 0}</td>
+                                <td style={{ padding: '9px 8px' }}>
+                                  <span style={{ color: s.day_successful ? '#10B981' : '#EF4444', fontWeight: 600 }}>{s.day_successful ? '✓' : '✗'}</span>
+                                </td>
+                                <td style={{ padding: '9px 8px' }}>
+                                  {s.perfect_day ? <span style={{ color: '#C9973A', fontWeight: 600 }}>⭐</span> : <span style={{ color: C.border }}>—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ── HISTORY ── */}
+            {activeTab === 'history' && (
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 14 }}>
+                  Daily Log History ({historyTotal} days total)
+                </div>
+                {historyLoading ? (
+                  <div style={{ color: C.textMuted, fontSize: 13 }}>Loading...</div>
+                ) : historyData.length === 0 ? (
+                  <div style={{ color: C.textMuted, fontSize: 13 }}>No history found</div>
+                ) : (
+                  <>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ borderBottom: `1px solid ${C.border}`, background: C.bg }}>
+                          {['Date', 'Habits', 'Points', 'Successful', 'Perfect', 'Submitted'].map(h => (
+                            <th key={h} style={{ padding: '9px 10px', textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 11 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {historyData.map(s => (
+                          <tr key={s.date} style={{ borderBottom: `1px solid ${C.border}` }}>
+                            <td style={{ padding: '9px 10px', color: C.text, fontWeight: 500 }}>{formatDateShort(s.date)}</td>
+                            <td style={{ padding: '9px 10px', color: C.text }}>{s.total_completed ?? '—'}</td>
+                            <td style={{ padding: '9px 10px', color: C.text }}>{s.total_points ?? '—'}</td>
+                            <td style={{ padding: '9px 10px' }}>
+                              <span style={{ color: s.day_successful ? '#10B981' : '#9CA3AF', fontWeight: 600 }}>{s.day_successful ? '✓' : '✗'}</span>
+                            </td>
+                            <td style={{ padding: '9px 10px' }}>{s.perfect_day ? <span style={{ color: '#C9973A' }}>⭐</span> : <span style={{ color: C.border }}>—</span>}</td>
+                            <td style={{ padding: '9px 10px' }}>{s.submitted ? <span style={{ color: '#10B981' }}>✓</span> : <span style={{ color: C.border }}>—</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {/* Pagination */}
+                    {historyTotal > HISTORY_PER_PAGE && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, fontSize: 13 }}>
+                        <span style={{ color: C.textMuted }}>Page {historyPage} of {Math.ceil(historyTotal / HISTORY_PER_PAGE)}</span>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={() => setHistoryPage(p => Math.max(1, p - 1))} disabled={historyPage === 1} style={{ ...btnGhost, padding: '6px 12px', opacity: historyPage === 1 ? 0.4 : 1 }}>← Prev</button>
+                          <button onClick={() => setHistoryPage(p => p + 1)} disabled={historyPage >= Math.ceil(historyTotal / HISTORY_PER_PAGE)} style={{ ...btnGhost, padding: '6px 12px', opacity: historyPage >= Math.ceil(historyTotal / HISTORY_PER_PAGE) ? 0.4 : 1 }}>Next →</button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ── REWARDS ── */}
             {activeTab === 'rewards' && (
               <div>
                 {isMinor ? (
@@ -626,12 +809,27 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                   </div>
                 ) : (
                   <>
+                    {/* This month reward cap summary */}
+                    <div style={{ padding: '12px 16px', background: C.bg, borderRadius: 10, marginBottom: 16, display: 'flex', gap: 20 }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>Monthly Points</div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: '#4A7A68' }}>{(u.monthly_points || 0).toLocaleString()}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>Tier Reward Cap</div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{formatMoney(TIERS[u.tier]?.reward_cap)}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>Successful Days</div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{u.successful_days || 0}</div>
+                      </div>
+                    </div>
                     <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 12 }}>Reward History</div>
                     {rewards.length === 0 ? <div style={{ color: C.textMuted, fontSize: 13 }}>No rewards yet</div> : (
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                         <thead>
                           <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                            {['Date', 'Amount', 'Type', 'Status'].map(h => (
+                            {['Date', 'Amount', 'Type', 'Status', 'Tremendous ID'].map(h => (
                               <th key={h} style={{ padding: '6px 8px', textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 11 }}>{h}</th>
                             ))}
                           </tr>
@@ -647,6 +845,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                                   {r.status || 'pending'}
                                 </span>
                               </td>
+                              <td style={{ padding: '8px', color: C.textMuted, fontSize: 11 }}>{r.tremendous_order_id || r.order_id || '—'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -657,9 +856,10 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
               </div>
             )}
 
+            {/* ── MESSAGES ── */}
             {activeTab === 'messages' && (
               <div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16, maxHeight: 320, overflowY: 'auto' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16, maxHeight: 360, overflowY: 'auto' }}>
                   {messages.length === 0 && <div style={{ color: C.textMuted, fontSize: 13 }}>No messages yet</div>}
                   {[...messages].reverse().map(m => (
                     <div key={m.id} style={{ display: 'flex', justifyContent: m.is_admin_reply ? 'flex-end' : 'flex-start' }}>
@@ -678,108 +878,104 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
               </div>
             )}
 
+            {/* ── NOTES (+ ACTIONS + FRAUD) ── */}
             {activeTab === 'notes' && (
               <div>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-                  <input value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Add a note..." style={{ flex: 1, ...inputStyle }}
-                    onKeyDown={e => { if (e.key === 'Enter') addNote() }} />
-                  <button onClick={addNote} style={btnPrimary}>Add</button>
-                </div>
-                {notes.length === 0 && <div style={{ color: C.textMuted, fontSize: 13 }}>No notes yet</div>}
-                {notes.map(n => (
-                  <div key={n.id} style={{ padding: 12, background: C.bg, borderRadius: 8, marginBottom: 8 }}>
-                    <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>{n.note}</div>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
-                      {n.type && <span style={{ fontSize: 10, background: '#EFF6FF', color: '#3B82F6', padding: '1px 6px', borderRadius: 6, fontWeight: 600 }}>{n.type}</span>}
-                      <span style={{ fontSize: 11, color: C.textMuted }}>{n.admin || 'Admin'} · {formatDate(n.created_at)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {activeTab === 'fraud' && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: 16, background: C.bg, borderRadius: 10, marginBottom: 16 }}>
-                  <FraudScoreCircle score={fraudScore} />
-                  <div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: fraudColor }}>{fraudScore} / 100</div>
-                    <div style={{ fontSize: 13, color: C.textMuted }}>{fraudScore >= 70 ? 'Critical Risk' : fraudScore >= 40 ? 'High Risk' : fraudScore >= 20 ? 'Suspicious' : fraudScore > 0 ? 'Watch' : 'Clean'}</div>
-                    {fraudData?.admin_flagged && <div style={{ fontSize: 11, color: '#EF4444', marginTop: 4 }}>⚑ Manually flagged by admin</div>}
+                {/* Quick actions */}
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Admin Actions</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {[
+                      { label: '➕ Add Bonus Points', key: 'bonus', bg: '#D1FAE5', textColor: '#065F46', border: '#4A7A68' },
+                      { label: '➖ Deduct Points', key: 'deduct', bg: '#FFF7ED', textColor: '#9A3412', border: '#F97316' },
+                      { label: '🧊 Freeze Streak', key: 'freeze', bg: '#EFF6FF', textColor: '#1D4ED8', border: '#3B82F6' },
+                      { label: '✉️ Send Message', key: 'message', bg: '#F0FDF4', textColor: '#166534', border: '#4A7A68' },
+                      ...(!isMinor ? [{ label: '🎁 Issue Reward', key: 'reward', bg: '#FEF3C7', textColor: '#92400E', border: '#C9973A' }] : [])
+                    ].map(a => (
+                      <button key={a.key} onClick={() => setActionModal(a.key)} style={{ padding: '12px', background: a.bg, color: a.textColor, border: `1px solid ${a.border}30`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}>
+                        {a.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>Fraud Signals</div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {SIGNALS.map(s => {
-                      const active = fraudData?.[s.key]
-                      if (!active) return null
-                      return <span key={s.key} style={{ padding: '4px 10px', borderRadius: 10, fontSize: 12, fontWeight: 600, background: '#FEE2E2', color: '#EF4444' }}>{s.label}</span>
-                    })}
-                    {!SIGNALS.some(s => fraudData?.[s.key]) && <span style={{ color: C.textMuted, fontSize: 13 }}>No signals detected</span>}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={flagForFraud} style={{ ...btnDanger, flex: 1 }}>⚑ Flag for Fraud Review</button>
-                  <button onClick={clearFraudFlag} style={{ ...btnGhost, flex: 1 }}>✓ Clear Fraud Flag</button>
-                </div>
-                {fraudData?.last_updated && <div style={{ fontSize: 12, color: C.textMuted, marginTop: 12 }}>Last scored: {formatDate(fraudData.last_updated)}</div>}
-              </div>
-            )}
 
-            {activeTab === 'actions' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 4 }}>Admin Actions</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  {[
-                    { label: '➕ Add Bonus Points', key: 'bonus', color: '#4A7A68', bg: '#D1FAE5', textColor: '#065F46' },
-                    { label: '➖ Deduct Points', key: 'deduct', color: '#F97316', bg: '#FFF7ED', textColor: '#9A3412' },
-                    { label: '🧊 Freeze Streak', key: 'freeze', color: '#3B82F6', bg: '#EFF6FF', textColor: '#1D4ED8' },
-                    { label: '✉️ Send Message', key: 'message', color: '#4A7A68', bg: '#F0FDF4', textColor: '#166534' },
-                    ...(!isMinor ? [{ label: '🎁 Issue Reward', key: 'reward', color: '#C9973A', bg: '#FEF3C7', textColor: '#92400E' }] : []),
-                  ].map(a => (
-                    <button key={a.key} onClick={() => setActionModal(a.key)}
-                      style={{ padding: '14px', background: a.bg, color: a.textColor, border: `1px solid ${a.color}30`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}>
-                      {a.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div style={{ marginTop: 8, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 10 }}>Account Status</div>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                {/* Account management */}
+                <div style={{ marginBottom: 20, paddingBottom: 20, borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Account</div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <select defaultValue="" onChange={e => { if (e.target.value) { changeTier(e.target.value); e.target.value = '' } }}
-                      style={{ flex: 1, padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, background: C.bg, color: C.text, cursor: 'pointer' }}>
+                      style={{ flex: 1, padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, background: C.bg, color: C.text, cursor: 'pointer', minWidth: 140 }}>
                       <option value="" disabled>Change Tier...</option>
-                      {Object.entries(TIERS).map(([k, v]) => <option key={k} value={k}>{v.name} — {formatMoney(v.price)}/mo</option>)}
+                      {Object.entries(TIERS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
                     </select>
                     <button onClick={pauseAccount} style={{ padding: '9px 14px', background: '#FEF3C7', color: '#92400E', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Pause 30d</button>
                   </div>
                 </div>
 
+                {/* Fraud */}
+                <div style={{ marginBottom: 20, paddingBottom: 20, borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Fraud Risk</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                    <FraudScoreCircle score={fraudScore} />
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: fraudColor }}>{fraudScore} / 100</div>
+                      <div style={{ fontSize: 13, color: C.textMuted }}>{fraudScore >= 70 ? 'Critical Risk' : fraudScore >= 40 ? 'High Risk' : fraudScore >= 20 ? 'Suspicious' : fraudScore > 0 ? 'Watch' : 'Clean'}</div>
+                      {fraudData?.admin_flagged && <div style={{ fontSize: 11, color: '#EF4444', marginTop: 2 }}>⚑ Admin flagged</div>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
+                      {SIGNALS.map(s => fraudData?.[s.key] && (
+                        <span key={s.key} style={{ padding: '3px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600, background: '#FEE2E2', color: '#EF4444' }}>{s.label}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={flagForFraud} style={{ ...btnDanger, flex: 1, fontSize: 12 }}>⚑ Flag for Fraud</button>
+                    <button onClick={clearFraudFlag} style={{ ...btnGhost, flex: 1, fontSize: 12 }}>✓ Clear Flag</button>
+                  </div>
+                </div>
+
+                {/* Delete */}
                 {deleteStep === 0 && (
-                  <div style={{ marginTop: 8, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
-                    <button onClick={() => setDeleteStep(1)} style={{ width: '100%', padding: '10px', background: '#FEE2E2', color: '#EF4444', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                      🗑️ Delete Account
-                    </button>
+                  <div style={{ marginBottom: 16 }}>
+                    <button onClick={() => setDeleteStep(1)} style={{ width: '100%', padding: '10px', background: '#FEE2E2', color: '#EF4444', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>🗑️ Delete Account</button>
                   </div>
                 )}
                 {deleteStep === 1 && (
-                  <div style={{ padding: 14, background: '#FEF2F2', borderRadius: 10, border: '1px solid #FECACA' }}>
+                  <div style={{ padding: 14, background: '#FEF2F2', borderRadius: 10, border: '1px solid #FECACA', marginBottom: 16 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: '#EF4444', marginBottom: 8 }}>Permanently delete this account?</div>
-                    <p style={{ margin: '0 0 12px', fontSize: 13, color: '#6B7280' }}>User: <strong>{u.email}</strong>. This action is logged and irreversible.</p>
+                    <p style={{ margin: '0 0 12px', fontSize: 13, color: '#6B7280' }}>User: <strong>{u.email}</strong>. Irreversible.</p>
                     <button onClick={() => setDeleteStep(2)} style={{ padding: '8px 14px', background: '#EF4444', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', marginRight: 8 }}>Continue</button>
                     <button onClick={() => setDeleteStep(0)} style={btnGhost}>Cancel</button>
                   </div>
                 )}
                 {deleteStep === 2 && (
-                  <div style={{ padding: 14, background: '#FEF2F2', borderRadius: 10, border: '1px solid #FECACA' }}>
-                    <div style={{ fontSize: 13, color: '#6B7280', marginBottom: 8 }}>Type <strong style={{ fontFamily: 'monospace', color: '#EF4444' }}>DELETE</strong> to confirm permanent deletion:</div>
+                  <div style={{ padding: 14, background: '#FEF2F2', borderRadius: 10, border: '1px solid #FECACA', marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, color: '#6B7280', marginBottom: 8 }}>Type <strong style={{ fontFamily: 'monospace', color: '#EF4444' }}>DELETE</strong> to confirm:</div>
                     <input value={deleteTyped} onChange={e => setDeleteTyped(e.target.value)} placeholder="DELETE" style={{ ...inputStyle, marginBottom: 10, fontFamily: 'monospace', borderColor: '#FECACA' }} />
                     <button onClick={deleteAccount} disabled={deleteTyped !== 'DELETE'} style={{ padding: '8px 14px', background: deleteTyped === 'DELETE' ? '#EF4444' : '#FCA5A5', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: deleteTyped === 'DELETE' ? 'pointer' : 'not-allowed', marginRight: 8 }}>Delete Permanently</button>
                     <button onClick={() => { setDeleteStep(0); setDeleteTyped('') }} style={btnGhost}>Cancel</button>
                   </div>
                 )}
+
+                {/* Notes */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Admin Notes</div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    <input value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Add a note..." style={{ flex: 1, ...inputStyle }}
+                      onKeyDown={e => { if (e.key === 'Enter') addNote() }} />
+                    <button onClick={addNote} style={btnPrimary}>Add</button>
+                  </div>
+                  {notes.length === 0 && <div style={{ color: C.textMuted, fontSize: 13 }}>No notes yet</div>}
+                  {notes.map(n => (
+                    <div key={n.id} style={{ padding: 12, background: C.bg, borderRadius: 8, marginBottom: 8 }}>
+                      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>{n.note}</div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
+                        {n.type && <span style={{ fontSize: 10, background: '#EFF6FF', color: '#3B82F6', padding: '1px 6px', borderRadius: 6, fontWeight: 600 }}>{n.type}</span>}
+                        <span style={{ fontSize: 11, color: C.textMuted }}>{n.admin || 'Admin'} · {formatDate(n.created_at)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

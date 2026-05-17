@@ -63,18 +63,17 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
       // Gender filter
       if (genderFilter !== 'all') query = query.eq('gender', genderFilter)
 
-      // Status filter using actual schema columns + last_active_date
+      // Status filter — use .neq(col, true) so NULL rows are also included
+      // (Supabase: .eq('deleted', false) excludes NULL rows; .neq('deleted', true) matches false AND null)
       if (statusFilter === 'active') {
-        // Active = not deleted, not paused, last_active_date within 7 days
         query = query
-          .eq('deleted', false)
-          .eq('pause_active', false)
+          .neq('deleted', true)
+          .neq('pause_active', true)
           .gte('last_active_date', sevenAgoDate)
       } else if (statusFilter === 'inactive') {
-        // Inactive = not deleted, not paused, last_active_date older than 7 days (or null)
         query = query
-          .eq('deleted', false)
-          .eq('pause_active', false)
+          .neq('deleted', true)
+          .neq('pause_active', true)
           .or(`last_active_date.lt.${sevenAgoDate},last_active_date.is.null`)
       } else if (statusFilter === 'paused') {
         query = query.eq('pause_active', true)

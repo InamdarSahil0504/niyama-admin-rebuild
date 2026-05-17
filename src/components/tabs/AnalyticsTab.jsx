@@ -191,6 +191,155 @@ function HealthKitSection({ C, sectionStyle }) {
   )
 }
 
+// ─── Cohort Comparison ────────────────────────────────────────────────────────
+function CohortSection({ C, sectionStyle }) {
+  const [dimension, setDimension] = useState('tier')
+  const [cohorts, setCohorts] = useState([])
+  const [cohortLoading, setCohortLoading] = useState(false)
+
+  const DIMENSIONS = [
+    { key: 'tier', label: 'Tier' },
+    { key: 'gender', label: 'Gender' },
+    { key: 'join_month', label: 'Join Month' },
+    { key: 'region', label: 'Region' }
+  ]
+
+  const fetchCohorts = useCallback(async (dim) => {
+    setCohortLoading(true)
+    try {
+      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+      const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
+
+      // Fetch all profiles with the grouping field + activity signal
+      const { data: profiles } = await supabase.from('profiles')
+        .select('id, tier, gender, region, created_at, last_active_date, deleted, pause_active')
+        .neq('deleted', true)
+
+      if (!profiles || profiles.length === 0) { setCohorts([]); return }
+
+      // Fetch this month's daily_summaries for all users
+      const { data: summaries } = await supabase.from('daily_summaries')
+        .select('user_id, day_successful, total_points')
+        .gte('date', monthStart)
+
+      // Build lookup: user_id → [summaries]
+      const summaryMap = {}
+      if (summaries) summaries.forEach(s => {
+        if (!summaryMap[s.user_id]) summaryMap[s.user_id] = []
+        summaryMap[s.user_id].push(s)
+      })
+
+      // Group profiles by dimension
+      const groupMap = {}
+      profiles.forEach(p => {
+        let key
+        if (dim === 'tier') key = p.tier || 'unknown'
+        else if (dim === 'gender') key = p.gender || 'not_set'
+        else if (dim === 'join_month') {
+          const d = new Date(p.created_at)
+          key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        }
+        else if (dim === 'region') key = p.region || 'not_set'
+        if (!groupMap[key]) groupMap[key] = []
+        groupMap[key].push(p)
+      })
+
+      const rows = Object.entries(groupMap).map(([group, members]) => {
+        const count = members.length
+        const active = members.filter(p => p.last_active_date && p.last_active_date >= sevenAgo).length
+        const allSummaries = members.flatMap(p => summaryMap[p.id] || [])
+        const daysLogged = allSummaries.length
+        const successDays = allSummaries.filter(s => s.day_successful).length
+        const totalPoints = allSummaries.reduce((a, s) => a + (s.total_points || 0), 0)
+
+        return {
+          group,
+          count,
+          activeRate: count > 0 ? Math.round((active / count) * 100) : 0,
+          avgSuccessDays: count > 0 ? (successDays / count).toFixed(1) : '—',
+          avgPoints: count > 0 ? Math.round(totalPoints / count) : '—',
+          avgDaysLogged: count > 0 ? (daysLogged / count).toFixed(1) : '—'
+        }
+      }).sort((a, b) => b.count - a.count)
+
+      setCohorts(rows)
+    } catch (err) {
+      console.error('[CohortSection]', err)
+      setCohorts([])
+    } finally {
+      setCohortLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchCohorts(dimension) }, [dimension, fetchCohorts])
+
+  const formatGroup = (group, dim) => {
+    if (dim === 'tier') {
+      const map = { free_trial: 'Free Trial', free_expired: 'Free (Expired)', basic: 'Basic', plus: 'Plus', premium: 'Premium', unknown: 'Unknown' }
+      return map[group] || group
+    }
+    if (dim === 'gender') return group === 'not_set' ? 'Not Set' : group.charAt(0).toUpperCase() + group.slice(1)
+    if (dim === 'region') return group === 'not_set' ? 'Not Set' : group
+    return group  // join_month already formatted
+  }
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: C.text }}>👥 Cohort Comparison</h3>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {DIMENSIONS.map(d => (
+            <button key={d.key} onClick={() => setDimension(d.key)} style={{
+              padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
+              background: dimension === d.key ? '#4A7A68' : C.bg, color: dimension === d.key ? '#fff' : C.textMuted
+            }}>{d.label}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 14 }}>
+        Comparing <strong>{DIMENSIONS.find(d => d.key === dimension)?.label}</strong> cohorts — active users only, this month's data
+      </div>
+
+      {cohortLoading ? (
+        <div style={{ padding: '30px 0', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>Loading cohort data...</div>
+      ) : cohorts.length === 0 ? (
+        <div style={{ padding: '30px 0', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>No data available</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: C.bg, borderBottom: `1px solid ${C.border}` }}>
+                {['Cohort', 'Users', 'Active Rate', 'Avg Successful Days', 'Avg Points', 'Avg Days Logged'].map(h => (
+                  <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {cohorts.map(row => (
+                <tr key={row.group} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: '12px', fontWeight: 700, color: C.text }}>{formatGroup(row.group, dimension)}</td>
+                  <td style={{ padding: '12px', color: C.text }}>{row.count.toLocaleString()}</td>
+                  <td style={{ padding: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ flex: 1, height: 6, background: C.border, borderRadius: 3, maxWidth: 80 }}>
+                        <div style={{ height: '100%', width: `${row.activeRate}%`, background: row.activeRate >= 50 ? '#4A7A68' : '#C9973A', borderRadius: 3 }} />
+                      </div>
+                      <span style={{ fontSize: 12, color: row.activeRate >= 50 ? '#4A7A68' : '#C9973A', fontWeight: 700, minWidth: 32 }}>{row.activeRate}%</span>
+                    </div>
+                  </td>
+                  <td style={{ padding: '12px', color: C.text }}>{row.avgSuccessDays}</td>
+                  <td style={{ padding: '12px', color: C.text }}>{row.avgPoints.toLocaleString?.() ?? row.avgPoints}</td>
+                  <td style={{ padding: '12px', color: C.text }}>{row.avgDaysLogged}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AnalyticsTab({ theme, addToast }) {
   const C = theme
   const [habitData, setHabitData] = useState([])
@@ -414,6 +563,9 @@ export default function AnalyticsTab({ theme, addToast }) {
       <div style={{ ...sectionStyle }}>
         <HealthKitSection C={C} sectionStyle={sectionStyle} />
       </div>
+
+      {/* Cohort Comparison */}
+      <CohortSection C={C} sectionStyle={sectionStyle} />
     </div>
   )
 }
