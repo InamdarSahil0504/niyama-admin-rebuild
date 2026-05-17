@@ -96,8 +96,8 @@ export const MILESTONES_INR = {
 export const SUCCESSFUL_DAY_RULE = '2 of 3 core habits AND 3 of 7 library habits'
 
 export const CORE_HABITS = [
-  { id: 'wake_consistency', name: 'Wake Consistency', points: 100 },
-  { id: 'sleep_duration', name: 'Sleep Duration', points: 100 },
+  { id: 'wake', name: 'Wake Consistency', points: 100 },
+  { id: 'sleep', name: 'Sleep Duration', points: 100 },
   { id: 'steps', name: 'Steps', points: [50, 75, 100] }
 ]
 

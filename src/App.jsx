@@ -78,6 +78,8 @@ function AdminAvatarMenu({ isDark, onToggleTheme, onLogout, C }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const email = import.meta.env.VITE_ADMIN_EMAIL || 'sahil@niyamalife.com'
+  const adminName = 'Sahil Inamdar'
+  const initials = adminName.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2)
 
   useEffect(() => {
     const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
@@ -96,7 +98,7 @@ function AdminAvatarMenu({ isDark, onToggleTheme, onLogout, C }) {
         }}
         title="Admin menu"
       >
-        S
+        {initials}
       </button>
       {open && (
         <div style={{

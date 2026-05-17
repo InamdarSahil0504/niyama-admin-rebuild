@@ -6,7 +6,9 @@ import { TIERS, getHabitLabel } from '../../config.js'
 
 function formatDate(d) {
   if (!d) return 'N/A'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
+  // Date-only strings (YYYY-MM-DD) must be parsed as local midnight to avoid UTC offset shifting the date backward
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? new Date(d + 'T00:00:00') : new Date(d)
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 function formatMoney(n) {
   if (n == null) return '$0.00'
@@ -306,30 +308,39 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
   const saveProfileEdit = async () => {
     setEditSaving(true)
     try {
-      const updatePayload = {
+      // Save confirmed core fields first (full_name, date_of_birth, region are known to exist)
+      const corePayload = {
         full_name: editForm.full_name || null,
         date_of_birth: editForm.date_of_birth || null,
-        phone: editForm.phone || null,
         region: editForm.region || null
       }
-      const { error } = await supabase.from('profiles').update(updatePayload).eq('id', user.id)
-      if (error) throw error
-      const changedFields = Object.keys(updatePayload).filter(k => editForm[k] !== (userDetails?.[k] || ''))
+      const { error: coreError } = await supabase.from('profiles').update(corePayload).eq('id', user.id)
+      if (coreError) throw coreError
+
+      // Phone is stored if the column exists; ignore silently if not
+      if (editForm.phone !== undefined) {
+        await supabase.from('profiles').update({ phone: editForm.phone || null }).eq('id', user.id).then(
+          ({ error }) => { if (error) console.warn('[saveProfileEdit] phone column may not exist:', error.message) }
+        )
+      }
+
+      const savedFields = Object.keys(corePayload).filter(k => editForm[k] !== (userDetails?.[k] || ''))
+      if (editForm.phone) savedFields.push('phone')
       await supabase.from('admin_notes').insert({
         user_id: user.id,
-        note: `[AUDIT] Admin updated profile fields: ${Object.keys(updatePayload).join(', ')}`,
+        note: `[AUDIT] Admin updated profile fields: ${savedFields.join(', ') || 'no changes'}`,
         type: 'profile_edit',
         created_at: new Date().toISOString(),
         admin: import.meta.env.VITE_ADMIN_EMAIL
       })
       addToast('Profile updated', 'success')
-      logAdminAction('profile_edit', { userId: user.id, email: user.email, fields: Object.keys(updatePayload) })
+      logAdminAction('profile_edit', { userId: user.id, email: user.email, fields: savedFields })
       setIsEditing(false)
       fetchAll()
       onUserUpdated?.()
     } catch (err) {
       addToast('Failed to save profile', 'error')
-      console.error(err)
+      console.error('[saveProfileEdit] error:', err)
     }
     setEditSaving(false)
   }
@@ -515,7 +526,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                       ['Monthly Points', (u.monthly_points || 0).toLocaleString()],
                       ['Successful Days', u.successful_days || 0],
                       ['Gender', u.gender || 'Not set'],
-                      ['Age', u.date_of_birth ? (new Date().getFullYear() - new Date(u.date_of_birth).getFullYear()) : (u.age || 'Not set')],
+                      ['Age', u.date_of_birth ? (new Date().getFullYear() - new Date(u.date_of_birth + 'T00:00:00').getFullYear()) : (u.age || 'Not set')],
                       ['Research Consent', u.research_consent == null
                         ? <span style={{ fontSize: 13, color: '#6B7280', fontWeight: 500 }}>Not set</span>
                         : u.research_consent

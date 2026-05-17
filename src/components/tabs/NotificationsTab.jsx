@@ -47,19 +47,7 @@ const SEGMENTS = [
   { value: 'inactive', label: 'By Inactive Days' }
 ]
 
-const MOCK_HISTORY = [
-  { id: 1, date: '2026-05-09', title: "Don't break your streak! 🔥", segment: 'All Users', recipients: 142, deliveryRate: '94%', openRate: '67%' },
-  { id: 2, date: '2026-05-08', title: 'Good morning! ☀️', segment: 'Plus + Premium', recipients: 38, deliveryRate: '97%', openRate: '71%' },
-  { id: 3, date: '2026-05-07', title: "Halfway through the day 💪", segment: 'All Users', recipients: 142, deliveryRate: '93%', openRate: '52%' },
-  { id: 4, date: '2026-05-05', title: 'Your reward is ready! 🎁', segment: 'Plus + Premium', recipients: 7, deliveryRate: '100%', openRate: '100%' },
-]
-
-const STATS_DATA = [
-  { type: 'Streak', sent: 580, opened: 388 },
-  { type: 'Morning', sent: 290, opened: 210 },
-  { type: 'Midday', sent: 290, opened: 151 },
-  { type: 'Reward', sent: 23, opened: 23 }
-]
+const STATS_DATA = []
 
 export default function NotificationsTab({ theme, addToast, logAdminAction }) {
   const C = theme
@@ -67,7 +55,7 @@ export default function NotificationsTab({ theme, addToast, logAdminAction }) {
   const [showConfirm, setShowConfirm] = useState(false)
   const [sending, setSending] = useState(false)
   const [schedule, setSchedule] = useState({ time: '', segment: 'all', templateId: '', days: [] })
-  const [history] = useState(MOCK_HISTORY)
+  const [history] = useState([])
 
   const prefillTemplate = (template) => {
     setCompose(prev => ({ ...prev, title: template.title, body: template.body }))
@@ -130,9 +118,9 @@ export default function NotificationsTab({ theme, addToast, logAdminAction }) {
       {/* Stats */}
       <div style={{ display: 'flex', gap: 14, marginBottom: 20, flexWrap: 'wrap' }}>
         {[
-          { label: 'Total Sent (30d)', value: MOCK_HISTORY.reduce((a, h) => a + h.recipients, 0) },
-          { label: 'Avg Delivery Rate', value: '95%' },
-          { label: 'Avg Open Rate', value: '72%' }
+          { label: 'Total Sent (30d)', value: '—' },
+          { label: 'Avg Delivery Rate', value: '—' },
+          { label: 'Avg Open Rate', value: '—' }
         ].map(stat => (
           <div key={stat.label} style={{ flex: 1, minWidth: 120, padding: '16px 18px', background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, textAlign: 'center' }}>
             <div style={{ fontSize: 24, fontWeight: 700, color: '#4A7A68' }}>{stat.value}</div>

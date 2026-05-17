@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
 import { supabase } from '../../supabase.js'
 import { TIERS, ALL_HABITS } from '../../config.js'
@@ -39,9 +38,7 @@ export default function DashboardTab({ theme, addToast }) {
   const [habitData, setHabitData] = useState([])
   const [streakDist, setStreakDist] = useState([])
   const [topUsers, setTopUsers] = useState([])
-  const [moodData, setMoodData] = useState([])
   const [alerts, setAlerts] = useState({ fraud: 0, unread: 0, minorRewardBalance: 0 })
-  const [healthkitRate, setHealthkitRate] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
 
   const fetchAll = useCallback(async () => {
@@ -51,14 +48,15 @@ export default function DashboardTab({ theme, addToast }) {
       const thirtyAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
       const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
 
-      const [profilesRes, todayRes, rewardsRes, fraudRes, unreadRes, dailyRes, habitLogsRes] = await Promise.all([
+      const [profilesRes, todayRes, rewardsRes, fraudRes, unreadRes, dailyRes, habitLogsRes, streakRes] = await Promise.all([
         supabase.from('profiles').select('id, tier, created_at, subscription_status, pause_active, deleted, is_minor, monthly_points'),
-        supabase.from('daily_summaries').select('user_id, total_points, is_successful, created_at').eq('date', today),
+        supabase.from('daily_summaries').select('user_id, total_points, is_successful, created_at, profiles(full_name, email)').eq('date', today),
         supabase.from('rewards').select('id, amount, status').eq('status', 'pending'),
         supabase.from('fraud_risk_scores').select('id, score').gte('score', 70),
         supabase.from('contact_messages').select('id').eq('is_read', false).eq('is_admin_reply', false),
-        supabase.from('daily_summaries').select('date, total_points, is_successful').gte('date', thirtyAgo).order('date'),
-        supabase.from('habit_logs').select('habit_key, user_id, points_earned').gte('created_at', thirtyAgo)
+        supabase.from('daily_summaries').select('date, user_id, total_points, is_successful').gte('date', thirtyAgo).order('date'),
+        supabase.from('habit_logs').select('habit_key, user_id, points_earned').gte('created_at', thirtyAgo),
+        supabase.from('profiles').select('current_streak').not('current_streak', 'is', null).gt('current_streak', 0)
       ])
 
       const profiles = profilesRes.data || []
@@ -68,6 +66,7 @@ export default function DashboardTab({ theme, addToast }) {
       const unreadMsgs = unreadRes.data || []
       const dailySummaries = dailyRes.data || []
       const habitLogs = habitLogsRes.data || []
+      const streaks = streakRes.data || []
 
       // KPIs
       const totalUsers = profiles.length
@@ -86,31 +85,27 @@ export default function DashboardTab({ theme, addToast }) {
         successfulDaysToday, rewardsPending,
         totalTrend, activeTrend: 0, mrrTrend: 0
       })
-      setAlerts({ fraud: fraudCritical.length, unread: unreadMsgs.length })
 
-      // Minor users with reward balances (compliance check)
       const minorRewardBalance = profiles.filter(p => p.is_minor && (p.monthly_points || 0) > 0).length
-      setAlerts(prev => ({ ...prev, minorRewardBalance }))
+      setAlerts({ fraud: fraudCritical.length, unread: unreadMsgs.length, minorRewardBalance })
 
-      // HealthKit connection rate — column not in schema, show null
-      setHealthkitRate(null)
-
-      // DAU chart - group daily summaries by date
+      // DAU chart — count distinct user_ids per day from daily_summaries
       const dauMap = {}
       dailySummaries.forEach(d => {
+        if (!d.user_id) return
         if (!dauMap[d.date]) dauMap[d.date] = new Set()
-        dauMap[d.date].add(d.user_id || d.id)
+        dauMap[d.date].add(d.user_id)
       })
       const dauArr = []
       for (let i = 29; i >= 0; i--) {
         const dt = new Date(); dt.setDate(dt.getDate() - i)
         const key = dt.toISOString().split('T')[0]
         const label = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Los_Angeles' })
-        dauArr.push({ date: label, users: dauMap[key]?.size || Math.floor(Math.random() * 20 + 5) })
+        dauArr.push({ date: label, users: dauMap[key]?.size || 0 })
       }
       setDauData(dauArr)
 
-      // Habit completion chart
+      // Habit completion chart — uses CORE_HABITS ids (wake, sleep, steps) matching DB
       const habitCountMap = {}
       habitLogs.forEach(h => { habitCountMap[h.habit_key] = (habitCountMap[h.habit_key] || 0) + 1 })
       const habitChartData = ALL_HABITS.map(h => ({
@@ -120,20 +115,25 @@ export default function DashboardTab({ theme, addToast }) {
       })).sort((a, b) => b.count - a.count)
       setHabitData(habitChartData)
 
-      // Streak distribution - mock if needed
-      setStreakDist([
-        { range: '0-7 days', count: Math.round(totalUsers * 0.4) },
-        { range: '8-14 days', count: Math.round(totalUsers * 0.25) },
-        { range: '15-30 days', count: Math.round(totalUsers * 0.2) },
-        { range: '31-60 days', count: Math.round(totalUsers * 0.1) },
-        { range: '60+ days', count: Math.round(totalUsers * 0.05) }
-      ])
+      // Streak distribution — real data from profiles.current_streak
+      const buckets = [
+        { range: '0–7 days', min: 1, max: 7, count: 0 },
+        { range: '8–14 days', min: 8, max: 14, count: 0 },
+        { range: '15–30 days', min: 15, max: 30, count: 0 },
+        { range: '31–60 days', min: 31, max: 60, count: 0 },
+        { range: '60+ days', min: 61, max: Infinity, count: 0 }
+      ]
+      streaks.forEach(p => {
+        const s = p.current_streak || 0
+        const b = buckets.find(bk => s >= bk.min && s <= bk.max)
+        if (b) b.count++
+      })
+      setStreakDist(buckets.map(({ range, count }) => ({ range, count })))
 
-      // Mood data — mood column not in daily_summaries schema; leave empty
-      setMoodData([])
-
-      // Top users today
-      const sortedToday = [...todaySummaries].sort((a, b) => (b.total_points || 0) - (a.total_points || 0)).slice(0, 5)
+      // Top users today — sorted by points, with profile join
+      const sortedToday = [...todaySummaries]
+        .sort((a, b) => (b.total_points || 0) - (a.total_points || 0))
+        .slice(0, 5)
       setTopUsers(sortedToday)
 
       setLastUpdated(new Date())
@@ -150,15 +150,13 @@ export default function DashboardTab({ theme, addToast }) {
     return () => clearInterval(interval)
   }, [fetchAll])
 
-  const MOOD_COLORS = ['#4A7A68', '#C9973A', '#C96A52', '#3B82F6', '#8B5CF6']
   const sectionStyle = { background: C.card, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 20 }
   const sectionTitle = { fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }
-  const insight = { fontSize: 12, color: C.textMuted, marginTop: 8, fontStyle: 'italic' }
 
   return (
     <div style={{ padding: 24, background: C.bg, minHeight: '100%' }}>
       {/* Alert banner */}
-      {(alerts.fraud > 0 || alerts.unread > 0) && (
+      {(alerts.fraud > 0 || alerts.unread > 0 || alerts.minorRewardBalance > 0) && (
         <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, padding: '12px 16px', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 18 }}>⚠️</span>
           <div style={{ flex: 1 }}>
@@ -186,32 +184,29 @@ export default function DashboardTab({ theme, addToast }) {
           <KPICard icon="🏆" label="Points Issued (30d)" value={(kpis.totalPointsIssued || 0).toLocaleString()} C={C} />
           <KPICard icon="✅" label="Successful Days Today" value={kpis.successfulDaysToday || 0} C={C} />
           <KPICard icon="🎁" label="Rewards Pending" value={formatMoney(kpis.rewardsPending)} color="#C96A52" C={C} />
-          <KPICard icon="🍎" label="HealthKit Connected" value="—" C={C} color="#4A7A68" />
         </div>
       )}
 
       {/* DAU Chart */}
       <div style={sectionStyle}>
         <div style={sectionTitle}>Daily Active Users (30 days)</div>
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>Distinct users with a daily_summaries record per day</div>
         {loading ? <ChartSkeleton height={200} /> : (
-          <>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={dauData}>
-                <defs>
-                  <linearGradient id="dauGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#4A7A68" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#4A7A68" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                <XAxis dataKey="date" tick={{ fontSize: 11, fill: C.textMuted }} interval={4} />
-                <YAxis tick={{ fontSize: 11, fill: C.textMuted }} />
-                <Tooltip contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
-                <Area type="monotone" dataKey="users" stroke="#4A7A68" fill="url(#dauGrad)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
-            <p style={insight}>Showing unique users who logged at least one habit or completed a daily summary.</p>
-          </>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={dauData}>
+              <defs>
+                <linearGradient id="dauGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#4A7A68" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#4A7A68" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: C.textMuted }} interval={4} />
+              <YAxis tick={{ fontSize: 11, fill: C.textMuted }} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
+              <Area type="monotone" dataKey="users" stroke="#4A7A68" fill="url(#dauGrad)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
         )}
       </div>
 
@@ -219,132 +214,70 @@ export default function DashboardTab({ theme, addToast }) {
         {/* Habit Completion */}
         <div style={{ ...sectionStyle, marginBottom: 0 }}>
           <div style={sectionTitle}>Habit Completion (30 days)</div>
-          {loading ? <ChartSkeleton height={240} /> : (
-            <>
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={habitData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                  <XAxis type="number" tick={{ fontSize: 10, fill: C.textMuted }} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: C.textMuted }} width={110} />
-                  <Tooltip contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
-                  <Bar dataKey="count" fill="#4A7A68" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              <p style={insight}>Wake Consistency and Sleep Duration drive most completions. Steps habit shows tiered engagement.</p>
-            </>
+          {loading ? <ChartSkeleton height={240} /> : habitData.every(h => h.count === 0) ? (
+            <div style={{ padding: '40px 0', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>No habit data in the last 30 days</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={habitData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                <XAxis type="number" tick={{ fontSize: 10, fill: C.textMuted }} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: C.textMuted }} width={110} />
+                <Tooltip contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
+                <Bar dataKey="count" fill="#4A7A68" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           )}
         </div>
 
         {/* Streak Distribution */}
         <div style={{ ...sectionStyle, marginBottom: 0 }}>
           <div style={sectionTitle}>Streak Length Distribution</div>
-          {loading ? <ChartSkeleton height={240} /> : (
-            <>
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={streakDist}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                  <XAxis dataKey="range" tick={{ fontSize: 10, fill: C.textMuted }} />
-                  <YAxis tick={{ fontSize: 10, fill: C.textMuted }} />
-                  <Tooltip contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
-                  <Bar dataKey="count" fill="#C9973A" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              <p style={insight}>Most users are in the 0-7 day range. Users reaching 15+ days show significantly higher retention.</p>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-        {/* Mood Distribution */}
-        <div style={{ ...sectionStyle, marginBottom: 0 }}>
-          <div style={sectionTitle}>Mood Distribution</div>
-          {loading ? <ChartSkeleton height={200} /> : moodData.length === 0 ? (
-            <div style={{ padding: '30px 0', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>No mood data recorded yet</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>Users with an active streak</div>
+          {loading ? <ChartSkeleton height={240} /> : streakDist.every(b => b.count === 0) ? (
+            <div style={{ padding: '40px 0', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>No streak data yet</div>
           ) : (
-            <>
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={moodData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false} fontSize={11}>
-                    {moodData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={MOOD_COLORS[index % MOOD_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-              <p style={insight}>Mood data is optional and collected via daily check-in. Positive moods correlate with streak length.</p>
-            </>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={streakDist}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                <XAxis dataKey="range" tick={{ fontSize: 10, fill: C.textMuted }} />
+                <YAxis tick={{ fontSize: 10, fill: C.textMuted }} allowDecimals={false} />
+                <Tooltip contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
+                <Bar dataKey="count" fill="#C9973A" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           )}
-        </div>
-
-        {/* Cohort Retention */}
-        <div style={{ ...sectionStyle, marginBottom: 0 }}>
-          <div style={sectionTitle}>Cohort Retention (Weeks)</div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-              <thead>
-                <tr>
-                  <th style={{ padding: '6px 8px', textAlign: 'left', color: C.textMuted, fontWeight: 600 }}>Cohort</th>
-                  {['W0', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8'].map(w => (
-                    <th key={w} style={{ padding: '6px 8px', textAlign: 'center', color: C.textMuted, fontWeight: 600 }}>{w}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  { cohort: 'Apr W1', values: [100, 72, 61, 55, 50, 47, 44, 42, 40] },
-                  { cohort: 'Apr W2', values: [100, 68, 58, 51, 47, 43, 41, 38, null] },
-                  { cohort: 'Apr W3', values: [100, 71, 62, 54, 49, 45, 43, null, null] },
-                  { cohort: 'Apr W4', values: [100, 74, 63, 57, 52, 48, null, null, null] },
-                  { cohort: 'May W1', values: [100, 70, 59, 53, 48, null, null, null, null] },
-                ].map(row => (
-                  <tr key={row.cohort} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: '6px 8px', color: C.text, fontWeight: 500 }}>{row.cohort}</td>
-                    {row.values.map((v, i) => (
-                      <td key={i} style={{ padding: '6px 8px', textAlign: 'center' }}>
-                        {v !== null ? (
-                          <span style={{
-                            display: 'inline-block', padding: '2px 6px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                            background: v >= 60 ? '#D1FAE5' : v >= 40 ? '#FEF3C7' : '#FEE2E2',
-                            color: v >= 60 ? '#065F46' : v >= 40 ? '#92400E' : '#991B1B'
-                          }}>{v}%</span>
-                        ) : <span style={{ color: C.border }}>—</span>}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p style={insight}>Week 1 retention of ~70% is above average for wellness apps. Focus on W2-W3 drop-off point.</p>
         </div>
       </div>
 
       {/* Top Users Today */}
       <div style={sectionStyle}>
         <div style={sectionTitle}>Top 5 Most Active Users Today</div>
-        {topUsers.length === 0 ? (
+        {loading ? <ChartSkeleton height={120} /> : topUsers.length === 0 ? (
           <div style={{ color: C.textMuted, fontSize: 13, padding: '12px 0' }}>No user activity recorded yet today</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                {['User', 'Points Today', 'Successful Day'].map(h => (
+                {['#', 'User', 'Points Today', 'Successful Day'].map(h => (
                   <th key={h} style={{ padding: '8px', textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 11 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {topUsers.map((u, i) => (
-                <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                  <td style={{ padding: '8px', color: C.text }}>User {u.user_id?.slice(0, 8) || '—'}</td>
-                  <td style={{ padding: '8px', color: '#4A7A68', fontWeight: 600 }}>{(u.total_points || 0).toLocaleString()} pts</td>
-                  <td style={{ padding: '8px' }}>
-                    <span style={{ color: u.is_successful ? '#10B981' : '#6B7280' }}>{u.is_successful ? '✓ Yes' : '—'}</span>
-                  </td>
-                </tr>
-              ))}
+              {topUsers.map((u, i) => {
+                const profile = u.profiles || {}
+                const displayName = profile.full_name || profile.email || `User ${u.user_id?.slice(0, 8) || '—'}`
+                return (
+                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '8px', color: C.textMuted, fontWeight: 600, width: 28 }}>{i + 1}</td>
+                    <td style={{ padding: '8px', color: C.text, fontWeight: 500 }}>{displayName}</td>
+                    <td style={{ padding: '8px', color: '#4A7A68', fontWeight: 600 }}>{(u.total_points || 0).toLocaleString()} pts</td>
+                    <td style={{ padding: '8px' }}>
+                      <span style={{ color: u.is_successful ? '#10B981' : '#6B7280' }}>{u.is_successful ? '✓ Yes' : '—'}</span>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}

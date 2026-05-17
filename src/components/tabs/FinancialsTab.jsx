@@ -39,7 +39,7 @@ export default function FinancialsTab({ theme, addToast, logAdminAction }) {
   const [revenueRange, setRevenueRange] = useState(30)
   const [revenueData, setRevenueData] = useState([])
   const [paidThisMonth, setPaidThisMonth] = useState(0)
-  const [monthlyPL, setMonthlyPL] = useState([])
+  const [monthlyRewards, setMonthlyRewards] = useState([])
 
   // Tremendous state
   const [tremendousQueue, setTremendousQueue] = useState([])
@@ -132,10 +132,12 @@ export default function FinancialsTab({ theme, addToast, logAdminAction }) {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [profilesRes, pendingRes, paidRes] = await Promise.all([
+      const sixMonthsAgo = new Date(Date.now() - 180 * 86400000).toISOString()
+      const [profilesRes, pendingRes, paidRes, monthlyRewardsRes] = await Promise.all([
         supabase.from('profiles').select('tier, created_at, is_minor'),
         supabase.from('rewards').select('id, user_id, amount, status, created_at, profiles(full_name, email, tier, is_minor)').eq('status', 'pending').order('created_at', { ascending: false }),
-        supabase.from('rewards').select('amount').eq('status', 'paid').gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString())
+        supabase.from('rewards').select('amount').eq('status', 'paid').gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
+        supabase.from('rewards').select('amount, paid_at').eq('status', 'paid').gte('paid_at', sixMonthsAgo).not('paid_at', 'is', null)
       ])
 
       const profiles = (profilesRes.data || []).filter(p => !p.is_minor)
@@ -146,7 +148,7 @@ export default function FinancialsTab({ theme, addToast, logAdminAction }) {
       const paid = (paidRes.data || []).reduce((a, r) => a + (r.amount || 0), 0)
       setPaidThisMonth(paid)
 
-      // Revenue trend (simulate from join dates)
+      // Revenue trend from actual join dates (cumulative MRR over time)
       const revArr = []
       for (let i = revenueRange - 1; i >= 0; i--) {
         const dt = new Date(); dt.setDate(dt.getDate() - i)
@@ -157,14 +159,17 @@ export default function FinancialsTab({ theme, addToast, logAdminAction }) {
       }
       setRevenueData(revArr)
 
-      // Mock monthly P&L
-      const currentMRR = Object.entries(dist).reduce((a, [k, count]) => a + count * (TIERS[k]?.price || 0), 0)
-      const months = ['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May']
-      setMonthlyPL(months.map((m, i) => ({
-        month: m,
-        revenue: parseFloat((currentMRR * (0.7 + i * 0.06)).toFixed(2)),
-        rewards: parseFloat((paid * (0.5 + i * 0.1)).toFixed(2))
-      })).map(r => ({ ...r, net: parseFloat((r.revenue - r.rewards).toFixed(2)) })))
+      // Real rewards paid by month (last 6 months)
+      const rewardsData = monthlyRewardsRes.data || []
+      const monthMap = {}
+      rewardsData.forEach(r => {
+        const d = new Date(r.paid_at)
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        const label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'America/Los_Angeles' })
+        if (!monthMap[key]) monthMap[key] = { month: label, rewards: 0 }
+        monthMap[key].rewards = parseFloat((monthMap[key].rewards + (r.amount || 0)).toFixed(2))
+      })
+      setMonthlyRewards(Object.values(monthMap).sort((a, b) => a.month < b.month ? -1 : 1))
     } catch (err) {
       console.error(err)
     } finally {
@@ -200,9 +205,6 @@ export default function FinancialsTab({ theme, addToast, logAdminAction }) {
   }))
   const totalMRR = mrrTable.reduce((a, t) => a + parseFloat(t.mrr), 0)
   const pieData = mrrTable.filter(t => parseFloat(t.mrr) > 0).map(t => ({ name: t.tier, value: parseFloat(t.mrr) }))
-
-  const churnRate = 3.2 // mock
-  const projectedMRR = totalMRR * (1 - churnRate / 100) * 1.05
 
   const sectionStyle = { background: C.card, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 20 }
   const btnStyle = (active) => ({ padding: '7px 14px', background: active ? '#4A7A68' : C.bg, color: active ? '#fff' : C.text, border: `1px solid ${active ? '#4A7A68' : C.border}`, borderRadius: 8, fontSize: 13, cursor: 'pointer', fontWeight: active ? 600 : 400 })
@@ -250,13 +252,8 @@ export default function FinancialsTab({ theme, addToast, logAdminAction }) {
                 </tr>
               </tbody>
             </table>
-            <div style={{ marginTop: 14, padding: '10px 14px', background: C.bg, borderRadius: 8, fontSize: 13 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                <span style={{ color: C.textMuted }}>Churn Rate (est.)</span><span style={{ fontWeight: 600, color: '#EF4444' }}>{churnRate}%</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: C.textMuted }}>Projected MRR (next month)</span><span style={{ fontWeight: 600, color: '#4A7A68' }}>{formatMoney(projectedMRR)}</span>
-              </div>
+            <div style={{ marginTop: 14, padding: '10px 14px', background: C.bg, borderRadius: 8, fontSize: 13, color: C.textMuted, fontStyle: 'italic' }}>
+              Churn rate and MRR projection require subscription history. Connect Stripe webhooks for historical data.
             </div>
           </div>
           {pieData.length > 0 ? (
@@ -345,31 +342,31 @@ export default function FinancialsTab({ theme, addToast, logAdminAction }) {
         )}
       </div>
 
-      {/* Monthly P&L */}
+      {/* Rewards Paid by Month */}
       <div style={sectionStyle}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: C.text }}>Monthly P&L (6 months)</h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {['Month', 'Revenue', 'Rewards Paid', 'Net'].map(h => (
-                <th key={h} style={{ padding: '8px', textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 11 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {monthlyPL.map(row => (
-              <tr key={row.month} style={{ borderBottom: `1px solid ${C.border}` }}>
-                <td style={{ padding: '10px 8px', fontWeight: 600, color: C.text }}>{row.month}</td>
-                <td style={{ padding: '10px 8px', color: '#4A7A68', fontWeight: 600 }}>{formatMoney(row.revenue)}</td>
-                <td style={{ padding: '10px 8px', color: '#C96A52' }}>{formatMoney(row.rewards)}</td>
-                <td style={{ padding: '10px 8px', fontWeight: 700, color: row.net >= 0 ? '#10B981' : '#EF4444' }}>{formatMoney(row.net)}</td>
+        <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: C.text }}>Rewards Paid by Month</h3>
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 16 }}>Real payouts from the rewards table (status = paid). Revenue history requires Stripe webhook integration.</div>
+        {monthlyRewards.length === 0 ? (
+          <div style={{ padding: '20px', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>No paid rewards in the last 6 months</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                {['Month', 'Rewards Paid'].map(h => (
+                  <th key={h} style={{ padding: '8px', textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 11 }}>{h}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-        <div style={{ marginTop: 12, padding: '10px 14px', background: C.bg, borderRadius: 8, fontSize: 13, color: C.textMuted, fontStyle: 'italic' }}>
-          Net = Subscription Revenue − Rewards Paid. Stripe fees not deducted.
-        </div>
+            </thead>
+            <tbody>
+              {monthlyRewards.map(row => (
+                <tr key={row.month} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: '10px 8px', fontWeight: 600, color: C.text }}>{row.month}</td>
+                  <td style={{ padding: '10px 8px', color: '#C96A52', fontWeight: 700 }}>{formatMoney(row.rewards)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* Tremendous Section */}

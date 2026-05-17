@@ -8,14 +8,6 @@ function formatDate(d) {
 }
 function formatMoney(n) { return '$' + Number(n || 0).toFixed(2) }
 
-const MOCK_HISTORY = [
-  { id: 1, type: 'Daily', date: '2026-05-09', status: 'Generated' },
-  { id: 2, type: 'Daily', date: '2026-05-08', status: 'Generated' },
-  { id: 3, type: 'Weekly', date: '2026-05-05', status: 'Generated' },
-  { id: 4, type: 'Daily', date: '2026-05-07', status: 'Generated' },
-  { id: 5, type: 'Monthly', date: '2026-05-01', status: 'Generated' }
-]
-
 export default function ReportsTab({ theme, addToast, logAdminAction }) {
   const C = theme
   const [generatingReport, setGeneratingReport] = useState(null)
@@ -24,7 +16,7 @@ export default function ReportsTab({ theme, addToast, logAdminAction }) {
   const [showPreview, setShowPreview] = useState(false)
   const [showEmailModal, setShowEmailModal] = useState(false)
   const [sendingEmail, setSendingEmail] = useState(false)
-  const [reportHistory] = useState(MOCK_HISTORY)
+  const [reportHistory] = useState([])
 
   const generateReport = useCallback(async (type) => {
     setGeneratingReport(type)
