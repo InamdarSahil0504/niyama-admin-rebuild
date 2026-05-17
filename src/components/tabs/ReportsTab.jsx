@@ -28,8 +28,8 @@ export default function ReportsTab({ theme, addToast, logAdminAction }) {
       const [newSignupsRes, activeRes, habitsRes, successRes, rewardsRes] = await Promise.all([
         supabase.from('profiles').select('id', { count: 'exact', head: true }).gte('created_at', since),
         supabase.from('daily_summaries').select('user_id', { count: 'exact', head: true }).gte('date', since.split('T')[0]),
-        supabase.from('habit_logs').select('habit_key, points_earned').gte('created_at', since),
-        supabase.from('daily_summaries').select('id', { count: 'exact', head: true }).gte('date', since.split('T')[0]).eq('is_successful', true),
+        supabase.from('habit_logs').select('habit_key, points_earned').gte('logged_at', since).eq('completed', true),
+        supabase.from('daily_summaries').select('id', { count: 'exact', head: true }).gte('date', since.split('T')[0]).eq('day_successful', true),
         supabase.from('rewards').select('amount').eq('status', 'paid').gte('created_at', since)
       ])
 

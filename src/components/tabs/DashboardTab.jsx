@@ -1,15 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell
 } from 'recharts'
 import { supabase } from '../../supabase.js'
 import { TIERS, ALL_HABITS } from '../../config.js'
 import { ChartSkeleton, CardSkeleton } from '../shared/LoadingSkeleton.jsx'
 
-function formatDate(d) {
-  if (!d) return 'N/A'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
-}
 function formatMoney(n) { return '$' + Number(n || 0).toFixed(2) }
 
 function KPICard({ icon, label, value, trend, color, C }) {
@@ -30,33 +27,45 @@ function KPICard({ icon, label, value, trend, color, C }) {
   )
 }
 
+const MOOD_LABELS = { 1: '😞 Terrible', 2: '😕 Bad', 3: '😐 Neutral', 4: '🙂 Good', 5: '😄 Great' }
+const MOOD_COLORS = ['#EF4444', '#F97316', '#EAB308', '#4A7A68', '#10B981']
+
 export default function DashboardTab({ theme, addToast }) {
   const C = theme
   const [loading, setLoading] = useState(true)
   const [kpis, setKpis] = useState({})
   const [dauData, setDauData] = useState([])
   const [habitData, setHabitData] = useState([])
-  const [streakDist, setStreakDist] = useState([])
+  const [moodData, setMoodData] = useState([])
   const [topUsers, setTopUsers] = useState([])
   const [alerts, setAlerts] = useState({ fraud: 0, unread: 0, minorRewardBalance: 0 })
-  const [lastUpdated, setLastUpdated] = useState(null)
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
       const today = new Date().toISOString().split('T')[0]
       const thirtyAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
+      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
       const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
 
-      const [profilesRes, todayRes, rewardsRes, fraudRes, unreadRes, dailyRes, habitLogsRes, streakRes] = await Promise.all([
-        supabase.from('profiles').select('id, tier, created_at, subscription_status, pause_active, deleted, is_minor, monthly_points'),
-        supabase.from('daily_summaries').select('user_id, total_points, is_successful, created_at, profiles(full_name, email)').eq('date', today),
+      const [
+        profilesRes, todayRes, rewardsRes, fraudRes, unreadRes,
+        dailyRes, habitLogsRes, moodRes
+      ] = await Promise.all([
+        supabase.from('profiles').select('id, tier, created_at, is_minor, monthly_points'),
+        // ── day_successful is the correct column name ──
+        supabase.from('daily_summaries')
+          .select('user_id, total_points, day_successful, profiles(full_name, email)')
+          .eq('date', today).eq('submitted', true),
         supabase.from('rewards').select('id, amount, status').eq('status', 'pending'),
         supabase.from('fraud_risk_scores').select('id, score').gte('score', 70),
         supabase.from('contact_messages').select('id').eq('is_read', false).eq('is_admin_reply', false),
-        supabase.from('daily_summaries').select('date, user_id, total_points, is_successful').gte('date', thirtyAgo).order('date'),
-        supabase.from('habit_logs').select('habit_key, user_id, points_earned').gte('created_at', thirtyAgo),
-        supabase.from('profiles').select('current_streak').not('current_streak', 'is', null).gt('current_streak', 0)
+        // ── 30-day DAU: group by date, count distinct user_id ──
+        supabase.from('daily_summaries').select('date, user_id, total_points').gte('date', thirtyAgo).order('date'),
+        // ── habit_logs: logged_at is the timestamp column ──
+        supabase.from('habit_logs').select('habit_key, user_id, points_earned').eq('completed', true).gte('logged_at', thirtyAgo + 'T00:00:00'),
+        // ── mood is integer 1-5 in daily_summaries ──
+        supabase.from('daily_summaries').select('mood').gte('date', thirtyAgo).not('mood', 'is', null)
       ])
 
       const profiles = profilesRes.data || []
@@ -66,30 +75,28 @@ export default function DashboardTab({ theme, addToast }) {
       const unreadMsgs = unreadRes.data || []
       const dailySummaries = dailyRes.data || []
       const habitLogs = habitLogsRes.data || []
-      const streaks = streakRes.data || []
+      const moodRows = moodRes.data || []
 
-      // KPIs
+      // ── KPIs ──
       const totalUsers = profiles.length
       const activeToday = todaySummaries.length
       const mrrCalc = profiles.reduce((acc, p) => acc + (TIERS[p.tier]?.price || 0), 0)
-      const totalPointsIssued = dailySummaries.reduce((a, d) => a + (d.total_points || 0), 0)
-      const successfulDaysToday = todaySummaries.filter(d => d.is_successful).length
+      // Points issued this month from daily_summaries
+      const thisMonthSummaries = dailySummaries.filter(d => d.date >= monthStart)
+      const totalPointsThisMonth = thisMonthSummaries.reduce((a, d) => a + (d.total_points || 0), 0)
+      // day_successful is the correct boolean column
+      const successfulDaysToday = todaySummaries.filter(d => d.day_successful).length
       const rewardsPending = pendingRewards.reduce((a, r) => a + (r.amount || 0), 0)
 
-      // Last week KPIs for trend
       const prevProfiles = profiles.filter(p => new Date(p.created_at) < new Date(sevenAgo))
       const totalTrend = prevProfiles.length > 0 ? Math.round(((totalUsers - prevProfiles.length) / prevProfiles.length) * 100) : 0
 
-      setKpis({
-        totalUsers, activeToday, mrr: mrrCalc, totalPointsIssued,
-        successfulDaysToday, rewardsPending,
-        totalTrend, activeTrend: 0, mrrTrend: 0
-      })
+      setKpis({ totalUsers, activeToday, mrr: mrrCalc, totalPointsThisMonth, successfulDaysToday, rewardsPending, totalTrend })
 
       const minorRewardBalance = profiles.filter(p => p.is_minor && (p.monthly_points || 0) > 0).length
       setAlerts({ fraud: fraudCritical.length, unread: unreadMsgs.length, minorRewardBalance })
 
-      // DAU chart — count distinct user_ids per day from daily_summaries
+      // ── DAU: distinct user_ids per day ──
       const dauMap = {}
       dailySummaries.forEach(d => {
         if (!d.user_id) return
@@ -105,7 +112,7 @@ export default function DashboardTab({ theme, addToast }) {
       }
       setDauData(dauArr)
 
-      // Habit completion chart — uses CORE_HABITS ids (wake, sleep, steps) matching DB
+      // ── Habit completion — completed = true, logged_at used above ──
       const habitCountMap = {}
       habitLogs.forEach(h => { habitCountMap[h.habit_key] = (habitCountMap[h.habit_key] || 0) + 1 })
       const habitChartData = ALL_HABITS.map(h => ({
@@ -115,30 +122,20 @@ export default function DashboardTab({ theme, addToast }) {
       })).sort((a, b) => b.count - a.count)
       setHabitData(habitChartData)
 
-      // Streak distribution — real data from profiles.current_streak
-      const buckets = [
-        { range: '0–7 days', min: 1, max: 7, count: 0 },
-        { range: '8–14 days', min: 8, max: 14, count: 0 },
-        { range: '15–30 days', min: 15, max: 30, count: 0 },
-        { range: '31–60 days', min: 31, max: 60, count: 0 },
-        { range: '60+ days', min: 61, max: Infinity, count: 0 }
-      ]
-      streaks.forEach(p => {
-        const s = p.current_streak || 0
-        const b = buckets.find(bk => s >= bk.min && s <= bk.max)
-        if (b) b.count++
-      })
-      setStreakDist(buckets.map(({ range, count }) => ({ range, count })))
+      // ── Mood distribution — integer 1-5 ──
+      const moodMap = {}
+      moodRows.forEach(r => { if (r.mood >= 1 && r.mood <= 5) moodMap[r.mood] = (moodMap[r.mood] || 0) + 1 })
+      const moodArr = [1, 2, 3, 4, 5].map(v => ({ name: MOOD_LABELS[v], value: moodMap[v] || 0 })).filter(m => m.value > 0)
+      setMoodData(moodArr)
 
-      // Top users today — sorted by points, with profile join
+      // ── Top 5 today: submitted = true, sorted by total_points, profile joined ──
       const sortedToday = [...todaySummaries]
         .sort((a, b) => (b.total_points || 0) - (a.total_points || 0))
         .slice(0, 5)
       setTopUsers(sortedToday)
 
-      setLastUpdated(new Date())
     } catch (err) {
-      console.error(err)
+      console.error('[DashboardTab] fetch error:', err)
     } finally {
       setLoading(false)
     }
@@ -172,16 +169,16 @@ export default function DashboardTab({ theme, addToast }) {
         <div style={{ display: 'flex', gap: 14, marginBottom: 20, flexWrap: 'wrap' }}>
           {Array(6).fill(0).map((_, i) => (
             <div key={i} style={{ flex: 1, minWidth: 130, background: C.card, borderRadius: 12, padding: 20, border: `1px solid ${C.border}` }}>
-              <CardSkeleton dark={C === theme && C.bg === '#080D16'} />
+              <CardSkeleton dark={false} />
             </div>
           ))}
         </div>
       ) : (
         <div style={{ display: 'flex', gap: 14, marginBottom: 20, flexWrap: 'wrap' }}>
           <KPICard icon="👤" label="Total Users" value={kpis.totalUsers?.toLocaleString() || '0'} trend={kpis.totalTrend} C={C} />
-          <KPICard icon="⚡" label="Active Today" value={kpis.activeToday?.toLocaleString() || '0'} trend={kpis.activeTrend} C={C} />
-          <KPICard icon="💰" label="MRR" value={formatMoney(kpis.mrr)} trend={kpis.mrrTrend} color="#4A7A68" C={C} />
-          <KPICard icon="🏆" label="Points Issued (30d)" value={(kpis.totalPointsIssued || 0).toLocaleString()} C={C} />
+          <KPICard icon="⚡" label="Active Today" value={kpis.activeToday?.toLocaleString() || '0'} C={C} />
+          <KPICard icon="💰" label="MRR" value={formatMoney(kpis.mrr)} color="#4A7A68" C={C} />
+          <KPICard icon="🏆" label="Points Issued (this month)" value={(kpis.totalPointsThisMonth || 0).toLocaleString()} C={C} />
           <KPICard icon="✅" label="Successful Days Today" value={kpis.successfulDaysToday || 0} C={C} />
           <KPICard icon="🎁" label="Rewards Pending" value={formatMoney(kpis.rewardsPending)} color="#C96A52" C={C} />
         </div>
@@ -190,7 +187,7 @@ export default function DashboardTab({ theme, addToast }) {
       {/* DAU Chart */}
       <div style={sectionStyle}>
         <div style={sectionTitle}>Daily Active Users (30 days)</div>
-        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>Distinct users with a daily_summaries record per day</div>
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>Distinct users with a submitted daily_summaries record per day</div>
         {loading ? <ChartSkeleton height={200} /> : (
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={dauData}>
@@ -204,7 +201,7 @@ export default function DashboardTab({ theme, addToast }) {
               <XAxis dataKey="date" tick={{ fontSize: 11, fill: C.textMuted }} interval={4} />
               <YAxis tick={{ fontSize: 11, fill: C.textMuted }} allowDecimals={false} />
               <Tooltip contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
-              <Area type="monotone" dataKey="users" stroke="#4A7A68" fill="url(#dauGrad)" strokeWidth={2} />
+              <Area type="monotone" dataKey="users" stroke="#4A7A68" fill="url(#dauGrad)" strokeWidth={2} name="Active Users" />
             </AreaChart>
           </ResponsiveContainer>
         )}
@@ -214,8 +211,9 @@ export default function DashboardTab({ theme, addToast }) {
         {/* Habit Completion */}
         <div style={{ ...sectionStyle, marginBottom: 0 }}>
           <div style={sectionTitle}>Habit Completion (30 days)</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 10 }}>completed = true only</div>
           {loading ? <ChartSkeleton height={240} /> : habitData.every(h => h.count === 0) ? (
-            <div style={{ padding: '40px 0', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>No habit data in the last 30 days</div>
+            <div style={{ padding: '40px 0', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>No completed habits in the last 30 days</div>
           ) : (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={habitData} layout="vertical">
@@ -229,31 +227,50 @@ export default function DashboardTab({ theme, addToast }) {
           )}
         </div>
 
-        {/* Streak Distribution */}
+        {/* Mood Distribution */}
         <div style={{ ...sectionStyle, marginBottom: 0 }}>
-          <div style={sectionTitle}>Streak Length Distribution</div>
-          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>Users with an active streak</div>
-          {loading ? <ChartSkeleton height={240} /> : streakDist.every(b => b.count === 0) ? (
-            <div style={{ padding: '40px 0', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>No streak data yet</div>
+          <div style={sectionTitle}>Mood Distribution (30 days)</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 10 }}>daily_summaries.mood (integer 1–5)</div>
+          {loading ? <ChartSkeleton height={240} /> : moodData.length === 0 ? (
+            <div style={{ padding: '40px 0', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>No mood data in the last 30 days</div>
           ) : (
             <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={streakDist}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                <XAxis dataKey="range" tick={{ fontSize: 10, fill: C.textMuted }} />
-                <YAxis tick={{ fontSize: 10, fill: C.textMuted }} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
-                <Bar dataKey="count" fill="#C9973A" radius={[4, 4, 0, 0]} />
-              </BarChart>
+              <PieChart>
+                <Pie
+                  data={moodData}
+                  cx="50%" cy="50%"
+                  outerRadius={90}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  labelLine={false}
+                  fontSize={11}
+                >
+                  {moodData.map((entry, i) => (
+                    <Cell key={i} fill={MOOD_COLORS[i % MOOD_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(v, n) => [v, n]} contentStyle={{ background: C.card, border: `1px solid ${C.border}`, fontSize: 12 }} />
+              </PieChart>
             </ResponsiveContainer>
           )}
+        </div>
+      </div>
+
+      {/* Streak Distribution — column not in profiles schema */}
+      <div style={{ ...sectionStyle, display: 'flex', alignItems: 'center', gap: 14, padding: '16px 20px', marginBottom: 20 }}>
+        <span style={{ fontSize: 28 }}>🔥</span>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>Streak Length Distribution</div>
+          <div style={{ fontSize: 13, color: C.textMuted }}>No streak column exists in the profiles table. Streak data is not available for charting.</div>
         </div>
       </div>
 
       {/* Top Users Today */}
       <div style={sectionStyle}>
         <div style={sectionTitle}>Top 5 Most Active Users Today</div>
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 10 }}>submitted = true, ordered by total_points DESC</div>
         {loading ? <ChartSkeleton height={120} /> : topUsers.length === 0 ? (
-          <div style={{ color: C.textMuted, fontSize: 13, padding: '12px 0' }}>No user activity recorded yet today</div>
+          <div style={{ color: C.textMuted, fontSize: 13, padding: '12px 0' }}>No submitted daily summaries yet today</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -273,7 +290,10 @@ export default function DashboardTab({ theme, addToast }) {
                     <td style={{ padding: '8px', color: C.text, fontWeight: 500 }}>{displayName}</td>
                     <td style={{ padding: '8px', color: '#4A7A68', fontWeight: 600 }}>{(u.total_points || 0).toLocaleString()} pts</td>
                     <td style={{ padding: '8px' }}>
-                      <span style={{ color: u.is_successful ? '#10B981' : '#6B7280' }}>{u.is_successful ? '✓ Yes' : '—'}</span>
+                      {/* day_successful is the correct column */}
+                      <span style={{ color: u.day_successful ? '#10B981' : '#6B7280' }}>
+                        {u.day_successful ? '✓ Yes' : '—'}
+                      </span>
                     </td>
                   </tr>
                 )

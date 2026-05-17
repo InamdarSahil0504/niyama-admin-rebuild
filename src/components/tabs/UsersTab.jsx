@@ -8,22 +8,22 @@ import { TIERS } from '../../config.js'
 
 function formatDate(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
+  // Date-only strings parsed as local midnight to avoid UTC shift
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? new Date(d + 'T00:00:00') : new Date(d)
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles' })
 }
 
 function daysSince(d) {
-  if (!d) return '—'
-  const days = Math.floor((Date.now() - new Date(d)) / 86400000)
-  return days
+  if (!d) return null
+  return Math.floor((Date.now() - new Date(d + 'T00:00:00')) / 86400000)
 }
 
-// Derive a display status from the actual schema columns
+// Derive status using last_active_date (active = within 7 days), pause_active, deleted
 function deriveStatus(u) {
-  if (u.deleted) return 'churned'
-  if (u.pause_active) return 'inactive'
-  const s = u.subscription_status
-  if (!s || s === 'active' || s === 'trialing') return 'active'
-  if (s === 'canceled' || s === 'past_due' || s === 'unpaid') return 'churned'
+  if (u.deleted) return 'deleted'
+  if (u.pause_active) return 'paused'
+  const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
+  if (u.last_active_date && u.last_active_date >= sevenAgo) return 'active'
   return 'inactive'
 }
 
@@ -37,7 +37,6 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
   const [genderFilter, setGenderFilter] = useState('all')
   const [sortCol, setSortCol] = useState('created_at')
   const [sortDir, setSortDir] = useState('desc')
-  // healthkit_connected does not exist in profiles schema — filter omitted
   const [selected, setSelected] = useState(new Set())
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
@@ -46,34 +45,61 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
   const PER_PAGE = 25
 
   const fetchUsers = useCallback(async () => {
-    setPage(1)
     setLoading(true)
     try {
-      // Columns use real profiles schema names (verified against DB)
+      const sevenAgoDate = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
+
       let query = supabase.from('profiles').select(
         'id, full_name, email, tier, subscription_status, pause_active, deleted, gender, created_at, last_active_date, monthly_points, successful_days, is_minor, research_consent',
         { count: 'exact' }
       )
+
+      // Search — DB level
       if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
+
+      // Tier filter
       if (tierFilter !== 'all') query = query.eq('tier', tierFilter)
-      if (statusFilter === 'active') query = query.eq('deleted', false).eq('pause_active', false).in('subscription_status', ['active', 'trialing'])
-      else if (statusFilter === 'inactive') query = query.eq('pause_active', true)
-      else if (statusFilter === 'churned') query = query.eq('deleted', true)
+
+      // Gender filter
       if (genderFilter !== 'all') query = query.eq('gender', genderFilter)
-      // Map sortCol UI keys to real DB column names
-      const sortColDB = sortCol === 'monthly_points' ? 'monthly_points'
-        : sortCol === 'successful_days' ? 'successful_days'
-        : sortCol === 'last_active_date' ? 'last_active_date'
-        : sortCol
+
+      // Status filter using actual schema columns + last_active_date
+      if (statusFilter === 'active') {
+        // Active = not deleted, not paused, last_active_date within 7 days
+        query = query
+          .eq('deleted', false)
+          .eq('pause_active', false)
+          .gte('last_active_date', sevenAgoDate)
+      } else if (statusFilter === 'inactive') {
+        // Inactive = not deleted, not paused, last_active_date older than 7 days (or null)
+        query = query
+          .eq('deleted', false)
+          .eq('pause_active', false)
+          .or(`last_active_date.lt.${sevenAgoDate},last_active_date.is.null`)
+      } else if (statusFilter === 'paused') {
+        query = query.eq('pause_active', true)
+      } else if (statusFilter === 'deleted') {
+        query = query.eq('deleted', true)
+      }
+
+      // Sort
+      const sortColDB = {
+        monthly_points: 'monthly_points',
+        successful_days: 'successful_days',
+        last_active_date: 'last_active_date',
+        created_at: 'created_at',
+        full_name: 'full_name',
+        tier: 'tier'
+      }[sortCol] || sortCol
       query = query.order(sortColDB, { ascending: sortDir === 'asc' })
       query = query.range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
+
       const { data, count, error } = await query
       if (error) throw error
-      // research_consent column may not exist yet — handle gracefully (all undefined shows as —)
       setUsers(data || [])
       setTotalCount(count || 0)
     } catch (err) {
-      console.error('[UsersTab] Supabase error:', err?.message || err?.code || err)
+      console.error('[UsersTab] error:', err?.message || err)
       addToast(`Failed to load users: ${err?.message || 'unknown error'}`, 'error')
     } finally {
       setLoading(false)
@@ -102,14 +128,13 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
 
   const exportCSV = () => {
     const selectedUsers = users.filter(u => selected.has(u.id))
-    const headers = ['Name', 'Email', 'Tier', 'Status', 'Points', 'Successful Days', 'Last Active', 'Joined', 'IsMinor', 'MinorDataNote', 'ResearchConsent']
+    const headers = ['Name', 'Email', 'Tier', 'Status', 'Points', 'Successful Days', 'Last Active', 'Joined', 'IsMinor', 'ResearchConsent']
     const rows = selectedUsers.map(u => [
       u.full_name || '', u.email || '', u.tier || '', deriveStatus(u),
       u.is_minor ? 'HIDDEN' : (u.monthly_points || 0),
       u.successful_days || 0,
-      formatDate(u.last_active_date), formatDate(u.created_at),
+      u.last_active_date || '—', formatDate(u.created_at),
       u.is_minor ? 'true' : 'false',
-      u.is_minor ? 'Handle under COPPA/GDPR-K' : '',
       u.research_consent === true ? 'true' : u.research_consent === false ? 'false' : ''
     ])
     const csv = [headers, ...rows].map(r => r.join(',')).join('\n')
@@ -141,6 +166,17 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
     return <span style={{ color: '#4A7A68', marginLeft: 4 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
   }
 
+  // Status badge colours
+  const statusStyle = (status) => {
+    const map = {
+      active:   { bg: '#D1FAE5', color: '#065F46', label: 'Active' },
+      inactive: { bg: '#FEF3C7', color: '#92400E', label: 'Inactive' },
+      paused:   { bg: '#EFF6FF', color: '#1D4ED8', label: 'Paused' },
+      deleted:  { bg: '#FEE2E2', color: '#EF4444', label: 'Deleted' }
+    }
+    return map[status] || map.inactive
+  }
+
   const cols = [
     { key: 'full_name', label: 'Name / Email' },
     { key: 'tier', label: 'Tier' },
@@ -164,16 +200,22 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
-        <input value={search} onChange={e => { setSearch(e.target.value); setPage(1) }} placeholder="Search name or email..." style={{ ...inputStyle, minWidth: 220 }} />
+        <input
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(1) }}
+          placeholder="Search name or email..."
+          style={{ ...inputStyle, minWidth: 220 }}
+        />
         <select value={tierFilter} onChange={e => { setTierFilter(e.target.value); setPage(1) }} style={selectStyle}>
           <option value="all">All Tiers</option>
           {Object.entries(TIERS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
         </select>
         <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1) }} style={selectStyle}>
           <option value="all">All Status</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-          <option value="churned">Churned</option>
+          <option value="active">Active (last 7 days)</option>
+          <option value="inactive">Inactive ({'>'} 7 days)</option>
+          <option value="paused">Paused</option>
+          <option value="deleted">Deleted</option>
         </select>
         <select value={genderFilter} onChange={e => { setGenderFilter(e.target.value); setPage(1) }} style={selectStyle}>
           <option value="all">All Genders</option>
@@ -181,7 +223,6 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
           <option value="female">Female</option>
           <option value="other">Other</option>
         </select>
-        {/* HealthKit filter removed — healthkit_connected column not in profiles schema */}
       </div>
 
       {/* Bulk action bar */}
@@ -208,7 +249,11 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
                   <input type="checkbox" checked={selected.size === users.length && users.length > 0} onChange={toggleAll} style={{ cursor: 'pointer' }} />
                 </th>
                 {cols.map(col => (
-                  <th key={col.key} onClick={() => col.sortable !== false && handleSort(col.key)} style={{ padding: '12px 14px', textAlign: 'left', cursor: col.sortable !== false ? 'pointer' : 'default', color: C.textMuted, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap' }}>
+                  <th
+                    key={col.key}
+                    onClick={() => col.sortable !== false && handleSort(col.key)}
+                    style={{ padding: '12px 14px', textAlign: 'left', cursor: col.sortable !== false ? 'pointer' : 'default', color: C.textMuted, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap' }}
+                  >
                     {col.label}{col.sortable !== false && <SortArrow col={col.key} />}
                   </th>
                 ))}
@@ -221,7 +266,9 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
               ) : users.length === 0 ? (
                 <tr><td colSpan={cols.length + 2} style={{ padding: 40, textAlign: 'center', color: C.textMuted }}>No users found matching your filters</td></tr>
               ) : users.map(u => {
-                const inactiveDays = daysSince(u.last_active_date)
+                const status = deriveStatus(u)
+                const daysAgo = daysSince(u.last_active_date)
+                const s = statusStyle(status)
                 const minorBg = '#FFFBEB'
                 return (
                   <tr
@@ -247,11 +294,13 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
                       </div>
                     </td>
                     <td style={{ padding: '12px 14px' }}><TierBadge tier={u.tier} /></td>
-                    <td style={{ padding: '12px 14px' }}><StatusDot status={deriveStatus(u)} showLabel /></td>
-                    <td style={{ padding: '12px 14px', color: C.text }}>{(u.monthly_points || 0).toLocaleString()}</td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <span style={{ padding: '3px 10px', borderRadius: 10, fontSize: 11, fontWeight: 700, background: s.bg, color: s.color }}>{s.label}</span>
+                    </td>
+                    <td style={{ padding: '12px 14px', color: C.text }}>{u.is_minor ? '—' : (u.monthly_points || 0).toLocaleString()}</td>
                     <td style={{ padding: '12px 14px', color: C.text }}>{u.successful_days || 0}</td>
-                    <td style={{ padding: '12px 14px', color: typeof inactiveDays === 'number' && inactiveDays > 14 ? '#EF4444' : C.textMuted }}>
-                      {typeof inactiveDays === 'number' ? `${inactiveDays}d ago` : '—'}
+                    <td style={{ padding: '12px 14px', color: daysAgo !== null && daysAgo > 14 ? '#EF4444' : C.textMuted }}>
+                      {daysAgo !== null ? `${daysAgo}d ago` : '—'}
                     </td>
                     <td style={{ padding: '12px 14px', color: C.textMuted }}>{formatDate(u.created_at)}</td>
                     <td style={{ padding: '12px 14px', textAlign: 'center' }}>

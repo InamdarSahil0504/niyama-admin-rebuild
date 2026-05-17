@@ -125,8 +125,8 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
         supabase.from('contact_messages').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
         supabase.from('admin_notes').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(20),
         supabase.from('fraud_risk_scores').select('*').eq('user_id', user.id).single(),
-        supabase.from('habit_logs').select('*').eq('user_id', user.id)
-          .gte('created_at', new Date(Date.now() - 86400000).toISOString()).order('created_at', { ascending: false }),
+        supabase.from('habit_logs').select('id, habit_key, completed, points_earned, habit_type, photo_url, logged_at').eq('user_id', user.id)
+          .eq('date', new Date().toISOString().split('T')[0]).eq('completed', true).order('logged_at', { ascending: false }),
         supabase.from('custom_habits').select('id, name, emoji, created_at, is_active').eq('user_id', user.id).order('created_at', { ascending: false })
       ])
       const profile = profileRes.data || user
@@ -245,7 +245,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
     if (!actionDays || isNaN(Number(actionDays))) return
     setActionLoading(true)
     try {
-      await supabase.from('profiles').update({ streak_freeze_used: true }).eq('id', user.id)
+      await supabase.from('profiles').update({ freeze_used_this_month: true }).eq('id', user.id)
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Streak freeze applied for ${actionDays} days. Reason: ${actionReason}`, type: 'streak_freeze', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
       addToast(`Streak frozen for ${actionDays} days`, 'success')
       logAdminAction('streak_freeze', { userId: user.id, email: user.email, days: actionDays, reason: actionReason })
@@ -445,7 +445,12 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                   <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>{u.full_name || 'Unknown'}</h3>
                   {isMinor && <span style={{ background: '#FEF3C7', color: '#92400E', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700, border: '1px solid #F59E0B' }}>⚠ MINOR</span>}
                   <TierBadge tier={u.tier} />
-                  <StatusDot status={u.deleted ? 'churned' : u.pause_active ? 'inactive' : (u.subscription_status === 'active' || u.subscription_status === 'trialing' || !u.subscription_status) ? 'active' : 'churned'} showLabel />
+                  <StatusDot status={(() => {
+                    if (u.deleted) return 'churned'
+                    if (u.pause_active) return 'inactive'
+                    const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
+                    return (u.last_active_date && u.last_active_date >= sevenAgo) ? 'active' : 'churned'
+                  })()} showLabel />
                 </div>
                 <div style={{ fontSize: 13, color: C.textMuted, marginTop: 2 }}>{u.email}</div>
               </div>
@@ -522,7 +527,6 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                     {[
                       ['Joined', formatDate(u.created_at)],
                       ['Last Active', formatDate(u.last_active_date || u.updated_at)],
-                      ['Current Streak', `${u.current_streak || 0} days`],
                       ['Monthly Points', (u.monthly_points || 0).toLocaleString()],
                       ['Successful Days', u.successful_days || 0],
                       ['Gender', u.gender || 'Not set'],

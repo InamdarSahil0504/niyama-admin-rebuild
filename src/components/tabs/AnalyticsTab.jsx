@@ -196,17 +196,20 @@ export default function AnalyticsTab({ theme, addToast }) {
   const [habitData, setHabitData] = useState([])
   const [dauData, setDauData] = useState([])
   const [funnel, setFunnel] = useState({ signups: 0, onboarded: 0, firstHabit: 0, retained7d: 0 })
+  const [moodData, setMoodData] = useState([])
   const [loading, setLoading] = useState(true)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
       const thirtyAgo = new Date(Date.now() - 30 * 86400000).toISOString()
+      const thirtyAgoDate = thirtyAgo.split('T')[0]
       const sevenAgo = new Date(Date.now() - 7 * 86400000).toISOString()
-      const [habitRes, eventsRes, profilesRes] = await Promise.all([
-        supabase.from('habit_logs').select('habit_key').gte('created_at', thirtyAgo),
+      const [habitRes, eventsRes, profilesRes, moodRes] = await Promise.all([
+        supabase.from('habit_logs').select('habit_key').gte('logged_at', thirtyAgo).eq('completed', true),
         supabase.from('app_events').select('created_at, event_type').gte('created_at', thirtyAgo).order('created_at'),
-        supabase.from('profiles').select('id, created_at, onboarding_complete').gte('created_at', thirtyAgo)
+        supabase.from('profiles').select('id, created_at, onboarding_complete').gte('created_at', thirtyAgo),
+        supabase.from('daily_summaries').select('mood').gte('date', thirtyAgoDate).not('mood', 'is', null)
       ])
 
       // Habit completion count — ALL_HABITS uses correct DB keys (wake, sleep, steps)
@@ -245,6 +248,12 @@ export default function AnalyticsTab({ theme, addToast }) {
         retained = retCount || 0
       }
       setFunnel({ signups, onboarded, firstHabit: habitLoggers, retained7d: retained })
+
+      // Mood distribution — daily_summaries.mood (int 1-5)
+      const MOOD_LABELS = { 1: '😞 Terrible', 2: '😕 Bad', 3: '😐 Neutral', 4: '🙂 Good', 5: '😄 Great' }
+      const moodCount = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+      if (moodRes.data) moodRes.data.forEach(r => { if (r.mood >= 1 && r.mood <= 5) moodCount[r.mood]++ })
+      setMoodData(Object.entries(moodCount).map(([k, v]) => ({ label: MOOD_LABELS[k], value: v, key: Number(k) })))
     } catch (err) {
       console.error(err)
     } finally {
@@ -371,6 +380,34 @@ export default function AnalyticsTab({ theme, addToast }) {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Mood Distribution (last 30 days) */}
+      <div style={sectionStyle}>
+        <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: C.text }}>Mood Distribution (30 days)</h3>
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 14 }}>Based on <code>daily_summaries.mood</code> — integer 1 (Terrible) to 5 (Great)</div>
+        {loading ? <div style={{ color: C.textMuted, fontSize: 13 }}>Loading...</div>
+          : moodData.every(d => d.value === 0) ? (
+            <div style={{ color: C.textMuted, fontSize: 13 }}>No mood data recorded in the last 30 days</div>
+          ) : (
+            <div style={{ display: 'flex', gap: 10 }}>
+              {moodData.map((d, i) => {
+                const MOOD_COLORS = ['#EF4444', '#F97316', '#EAB308', '#4A7A68', '#10B981']
+                const total = moodData.reduce((a, x) => a + x.value, 0)
+                const pct = total > 0 ? Math.round((d.value / total) * 100) : 0
+                return (
+                  <div key={d.key} style={{ flex: 1, textAlign: 'center' }}>
+                    <div style={{ height: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', marginBottom: 6 }}>
+                      <div style={{ width: '60%', background: MOOD_COLORS[i], borderRadius: '4px 4px 0 0', height: `${Math.max(pct, 4)}%`, minHeight: d.value > 0 ? 8 : 0, transition: 'height 0.4s' }} />
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: MOOD_COLORS[i] }}>{pct}%</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{d.label}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted }}>({d.value})</div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
       </div>
 
       {/* HealthKit Analytics */}
