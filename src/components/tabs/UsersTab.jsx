@@ -35,6 +35,7 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
   const [tierFilter, setTierFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [genderFilter, setGenderFilter] = useState('all')
+  const [consentFilter, setConsentFilter] = useState('all')
   const [sortCol, setSortCol] = useState('created_at')
   const [sortDir, setSortDir] = useState('desc')
   const [selected, setSelected] = useState(new Set())
@@ -60,6 +61,8 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
         if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
         if (tierFilter !== 'all') q = q.eq('tier', tierFilter)
         if (genderFilter !== 'all') q = q.eq('gender', genderFilter)
+        if (consentFilter === 'opted_in') q = q.eq('research_consent', true)
+        else if (consentFilter === 'opted_out') q = q.eq('research_consent', false)
         q = q.order(sortColDB, { ascending: sortDir === 'asc' })
 
         const { data: allData, error } = await q
@@ -77,6 +80,9 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
       if (tierFilter !== 'all') query = query.eq('tier', tierFilter)
       // Gender: DB stores 'Male' / 'Female' with capital first letter
       if (genderFilter !== 'all') query = query.eq('gender', genderFilter)
+      // Research consent filter
+      if (consentFilter === 'opted_in') query = query.eq('research_consent', true)
+      else if (consentFilter === 'opted_out') query = query.eq('research_consent', false)
 
       if (statusFilter === 'active') {
         // neq handles null rows (null != true)
@@ -100,7 +106,7 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
     } finally {
       setLoading(false)
     }
-  }, [search, tierFilter, statusFilter, genderFilter, sortCol, sortDir, page, addToast])
+  }, [search, tierFilter, statusFilter, genderFilter, consentFilter, sortCol, sortDir, page, addToast])
 
   useEffect(() => { fetchUsers() }, [fetchUsers])
 
@@ -222,6 +228,11 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
           <option value="all">All Genders</option>
           <option value="Male">Male</option>
           <option value="Female">Female</option>
+        </select>
+        <select value={consentFilter} onChange={e => { setConsentFilter(e.target.value); setPage(1) }} style={selectStyle}>
+          <option value="all">All Consent</option>
+          <option value="opted_in">🔬 Opted In</option>
+          <option value="opted_out">✗ Opted Out</option>
         </select>
       </div>
 

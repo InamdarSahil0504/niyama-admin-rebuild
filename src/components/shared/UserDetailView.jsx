@@ -94,6 +94,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
   const [todayHabits, setTodayHabits] = useState([])
   const [customHabits, setCustomHabits] = useState([])
   const [monthStats, setMonthStats] = useState(null)
+  const [consentHistory, setConsentHistory] = useState([])
   const [loading, setLoading] = useState(false)
 
   // Analytics tab state
@@ -138,7 +139,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       const today = new Date().toISOString().split('T')[0]
       const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
 
-      const [profileRes, rewardsRes, messagesRes, notesRes, fraudRes, habitsRes, customHabitsRes, monthRes] = await Promise.all([
+      const [profileRes, rewardsRes, messagesRes, notesRes, fraudRes, habitsRes, customHabitsRes, monthRes, consentRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('rewards').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(20),
         supabase.from('contact_messages').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
@@ -148,7 +149,10 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
           .select('id, habit_key, completed, points_earned, habit_type, photo_url, logged_at')
           .eq('user_id', user.id).eq('date', today).eq('completed', true).order('logged_at', { ascending: false }),
         supabase.from('custom_habits').select('id, name, emoji, created_at, is_active').eq('user_id', user.id).order('created_at', { ascending: false }),
-        supabase.from('daily_summaries').select('total_points, day_successful, total_completed').eq('user_id', user.id).gte('date', monthStart)
+        supabase.from('daily_summaries').select('total_points, day_successful, total_completed').eq('user_id', user.id).gte('date', monthStart),
+        supabase.from('app_events').select('id, created_at, event_data')
+          .eq('user_id', user.id).eq('event_type', 'research_consent_changed')
+          .order('created_at', { ascending: false }).limit(20)
       ])
 
       const profile = profileRes.data || user
@@ -165,6 +169,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       setFraudData(fraudRes.data || null)
       setTodayHabits(habitsRes.data || [])
       setCustomHabits(customHabitsRes.data || [])
+      setConsentHistory(consentRes.data || [])
 
       const monthSummaries = monthRes.data || []
       setMonthStats({
@@ -231,6 +236,7 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       setHistoryPage(1)
       setAnalyticsData(null)
       setHistoryData([])
+      setConsentHistory([])
     }
   }, [isOpen, user, fetchAll])
 
@@ -627,6 +633,16 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                   </div>
                 )}
 
+                {/* Fix 3 — Backfill note: null = predates consent tracking; false = explicitly opted out */}
+                {u.research_consent === null && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: C.bg, borderRadius: 8, marginBottom: 12, border: `1px solid ${C.border}` }}>
+                    <span style={{ fontSize: 14, flexShrink: 0 }}>ℹ️</span>
+                    <span style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>
+                      Consent not recorded — user predates consent tracking
+                    </span>
+                  </div>
+                )}
+
                 {/* This month stats */}
                 <div style={{ marginBottom: 16 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>This Month</div>
@@ -660,6 +676,54 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                       {h.photo_url && <span style={{ fontSize: 11, background: '#EFF6FF', color: '#3B82F6', padding: '1px 6px', borderRadius: 6 }}>📷</span>}
                     </div>
                   ))}
+                </div>
+
+                {/* Consent History */}
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>Consent History</div>
+                  {consentHistory.length === 0 ? (
+                    <div style={{ fontSize: 13, color: C.textMuted, fontStyle: 'italic' }}>No consent change events recorded</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                      {consentHistory.map((entry, idx) => {
+                        const isOptedIn = entry.event_data?.consent_value === true || entry.event_data?.new_value === true || entry.event_data?.opted_in === true
+                        const source = entry.event_data?.source || entry.event_data?.trigger || null
+                        const dtStr = new Date(entry.created_at).toLocaleString('en-US', {
+                          month: 'short', day: 'numeric', year: 'numeric',
+                          hour: 'numeric', minute: '2-digit', hour12: true,
+                          timeZone: 'America/Los_Angeles'
+                        }) + ' PT'
+                        return (
+                          <div key={entry.id} style={{ display: 'flex', gap: 12, paddingBottom: 14, position: 'relative' }}>
+                            {/* Timeline line */}
+                            {idx < consentHistory.length - 1 && (
+                              <div style={{ position: 'absolute', left: 9, top: 20, bottom: 0, width: 2, background: C.border }} />
+                            )}
+                            {/* Dot */}
+                            <div style={{ width: 20, height: 20, borderRadius: '50%', background: isOptedIn ? '#D1FAE5' : '#FEE2E2', border: `2px solid ${isOptedIn ? '#10B981' : '#EF4444'}`, flexShrink: 0, marginTop: 1, zIndex: 1 }} />
+                            {/* Content */}
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span style={{
+                                  padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700,
+                                  background: isOptedIn ? '#D1FAE5' : '#FEE2E2',
+                                  color: isOptedIn ? '#065F46' : '#EF4444'
+                                }}>
+                                  {isOptedIn ? '✓ Opted In' : '✗ Opted Out'}
+                                </span>
+                                {source && (
+                                  <span style={{ fontSize: 11, background: '#EFF6FF', color: '#3B82F6', padding: '2px 7px', borderRadius: 8, fontWeight: 500 }}>
+                                    {source}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>{dtStr}</div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
