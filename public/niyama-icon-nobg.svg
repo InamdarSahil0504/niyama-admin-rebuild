@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Stem -->
+  <line x1="256" y1="420" x2="256" y2="174" stroke="#4A7A68" stroke-width="24" stroke-linecap="round"/>
+  <!-- Left leaf -->
+  <ellipse cx="163" cy="308" rx="108" ry="70" fill="#4A7A68" transform="rotate(-30 163 308)"/>
+  <!-- Right leaf -->
+  <ellipse cx="349" cy="236" rx="108" ry="70" fill="#4A7A68" opacity="0.75" transform="rotate(30 349 236)"/>
+  <!-- Gold dot tip -->
+  <circle cx="256" cy="154" r="48" fill="#C9973A"/>
+</svg>

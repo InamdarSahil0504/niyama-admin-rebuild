@@ -65,12 +65,13 @@ const TABS = [
 
 function NiyamaLogo({ size = 32 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 512 512" style={{ flexShrink: 0 }}>
-      <ellipse cx="163" cy="308" rx="108" ry="70" fill="#4A7A68" transform="rotate(-30 163 308)" />
-      <ellipse cx="349" cy="236" rx="108" ry="70" fill="#4A7A68" opacity="0.75" transform="rotate(30 349 236)" />
-      <line x1="256" y1="420" x2="256" y2="174" stroke="#4A7A68" strokeWidth="24" strokeLinecap="round" />
-      <circle cx="256" cy="154" r="48" fill="#C9973A" />
-    </svg>
+    <img
+      src="/niyama-icon.svg"
+      width={size}
+      height={size}
+      alt="Niyama"
+      style={{ flexShrink: 0, display: 'block' }}
+    />
   )
 }
 
@@ -154,10 +155,17 @@ function LoginScreen({ onLogin, isDark }) {
     <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, sans-serif' }}>
       <div style={{ background: C.card, borderRadius: 20, padding: '48px 40px', maxWidth: 400, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', border: `1px solid ${C.border}` }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
             <NiyamaLogo size={56} />
           </div>
-          <h1 style={{ margin: '0 0 4px', fontSize: 26, fontWeight: 800, color: COLORS.primary }}>Niyama</h1>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}>
+            <img
+              src={isDark ? '/niyama-wordmark-light.svg' : '/niyama-wordmark-dark.svg'}
+              alt="Niyama"
+              height={28}
+              style={{ display: 'block' }}
+            />
+          </div>
           <div style={{ fontSize: 14, color: C.textMuted, fontWeight: 500 }}>Admin Dashboard</div>
         </div>
         <form onSubmit={handleLogin}>
@@ -336,10 +344,15 @@ export default function App() {
           {/* Logo */}
           <div style={{ padding: '18px 16px 14px', borderBottom: `1px solid ${C.border}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <NiyamaLogo size={34} />
+              <NiyamaLogo size={32} />
               <div>
-                <div style={{ fontWeight: 800, fontSize: 16, color: COLORS.primary, lineHeight: 1 }}>Niyama</div>
-                <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 500 }}>Admin Panel</div>
+                <img
+                  src={isDark ? '/niyama-wordmark-light.svg' : '/niyama-wordmark-dark.svg'}
+                  alt="Niyama"
+                  height={18}
+                  style={{ display: 'block', maxWidth: 110 }}
+                />
+                <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 500, marginTop: 2 }}>Admin Panel</div>
               </div>
             </div>
           </div>

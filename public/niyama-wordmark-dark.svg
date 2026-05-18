@@ -1,0 +1,20 @@
+<svg width="600" height="160" viewBox="0 0 600 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Dark background -->
+  <rect width="600" height="160" rx="20" fill="#111B2B"/>
+  <!-- Icon block -->
+  <rect width="148" height="148" rx="33" fill="#4A7A68" x="6" y="6"/>
+  <!-- Stem -->
+  <line x1="80" y1="122" x2="80" y2="52" stroke="#F2F5F3" stroke-width="9" stroke-linecap="round"/>
+  <!-- Left leaf -->
+  <ellipse cx="53" cy="92" rx="32" ry="21" fill="#F2F5F3" transform="rotate(-30 53 92)"/>
+  <!-- Right leaf -->
+  <ellipse cx="107" cy="70" rx="32" ry="21" fill="#F2F5F3" opacity="0.82" transform="rotate(30 107 70)"/>
+  <!-- Gold dot tip -->
+  <circle cx="80" cy="46" r="14" fill="#C9973A"/>
+  <!-- Wordmark: Niyama -->
+  <text x="180" y="92" font-family="DM Sans, Helvetica Neue, Arial, sans-serif" font-weight="700" font-size="76" fill="#F2F5F3">Niyama</text>
+  <!-- Wordmark: LIFE -->
+  <text x="182" y="136" font-family="DM Sans, Helvetica Neue, Arial, sans-serif" font-weight="500" font-size="34" fill="#4A7A68" letter-spacing="14">LIFE</text>
+  <!-- Salmon underline -->
+  <rect x="182" y="148" width="118" height="7" rx="3.5" fill="#C96A52" opacity="0.8"/>
+</svg>
