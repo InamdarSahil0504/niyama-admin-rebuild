@@ -268,20 +268,18 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
   const changeTier = async (newTier) => {
     try {
       await supabase.from('profiles').update({ tier: newTier }).eq('id', user.id)
-      setUserDetails(prev => ({ ...prev, tier: newTier }))
-      addToast(`Tier changed to ${TIERS[newTier]?.name}`, 'success')
+      addToast(`Tier changed to ${newTier}`, 'success')
       logAdminAction('tier_change', { userId: user.id, email: user.email, newTier })
-      onUserUpdated?.()
+      fetchAll(); onUserUpdated?.()
     } catch { addToast('Failed to change tier', 'error') }
   }
 
   const pauseAccount = async () => {
     try {
       await supabase.from('profiles').update({ pause_active: true }).eq('id', user.id)
-      setUserDetails(prev => ({ ...prev, pause_active: true }))
       addToast('Account paused for 30 days', 'warning')
       logAdminAction('account_paused', { userId: user.id, email: user.email })
-      onUserUpdated?.()
+      fetchAll(); onUserUpdated?.()
     } catch { addToast('Failed to pause account', 'error') }
   }
 
@@ -304,11 +302,10 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       const newBalance = (userDetails?.monthly_points || 0) + pts
       await supabase.from('profiles').update({ monthly_points: newBalance }).eq('id', user.id)
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Admin bonus: +${pts} points. Reason: ${actionReason}`, type: 'bonus_points', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
-      setUserDetails(prev => ({ ...prev, monthly_points: newBalance }))
       addToast(`+${pts} bonus points added`, 'success')
       logAdminAction('bonus_points', { userId: user.id, points: pts, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
-      onUserUpdated?.()
+      fetchAll(); onUserUpdated?.()
     } catch { addToast('Failed to add points', 'error') }
     setActionLoading(false)
   }
@@ -321,11 +318,10 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
       const newBalance = Math.max(0, (userDetails?.monthly_points || 0) - pts)
       await supabase.from('profiles').update({ monthly_points: newBalance }).eq('id', user.id)
       await supabase.from('admin_notes').insert({ user_id: user.id, note: `Admin deduction: -${pts} points. Reason: ${actionReason}`, type: 'deduct_points', created_at: new Date().toISOString(), admin: import.meta.env.VITE_ADMIN_EMAIL })
-      setUserDetails(prev => ({ ...prev, monthly_points: newBalance }))
       addToast(`-${pts} points deducted`, 'warning')
       logAdminAction('deduct_points', { userId: user.id, points: pts, reason: actionReason })
       setActionModal(null); setActionAmount(''); setActionReason('')
-      onUserUpdated?.()
+      fetchAll(); onUserUpdated?.()
     } catch { addToast('Failed to deduct points', 'error') }
     setActionLoading(false)
   }
@@ -395,28 +391,24 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
     setEditSaving(true)
     const savedFields = []
     try {
-      // Step 1: Save confirmed-existing fields (full_name, date_of_birth)
-      const nameAndDob = {
+      // Step 1: Save all confirmed-existing columns in a single update
+      // region column confirmed present (DEFAULT 'USA'). date_of_birth must be 'YYYY-MM-DD' string.
+      const corePayload = {
         full_name: editForm.full_name?.trim() || null,
-        date_of_birth: editForm.date_of_birth || null  // HTML date input always gives YYYY-MM-DD
+        date_of_birth: editForm.date_of_birth || null,
+        region: editForm.region || null
       }
-      console.log('[saveProfileEdit] payload:', nameAndDob, 'user_id:', user.id)
-      const { error: err1 } = await supabase.from('profiles').update(nameAndDob).eq('id', user.id)
-      if (err1) { console.error('[saveProfileEdit] nameAndDob error:', err1); throw err1 }
+      console.log('[saveProfileEdit] payload:', corePayload, 'user_id:', user.id)
+      const { error: err1 } = await supabase.from('profiles').update(corePayload).eq('id', user.id)
+      if (err1) { console.error('[saveProfileEdit] core error:', err1); throw err1 }
       if (editForm.full_name?.trim() !== (userDetails?.full_name || '')) savedFields.push('full_name')
       if (editForm.date_of_birth !== (userDetails?.date_of_birth || '')) savedFields.push('date_of_birth')
+      if (editForm.region !== (userDetails?.region || '')) savedFields.push('region')
 
-      // Step 2: region (silent if column missing)
-      if (editForm.region !== undefined) {
-        const { error: err2 } = await supabase.from('profiles').update({ region: editForm.region || null }).eq('id', user.id)
-        if (err2) console.warn('[saveProfileEdit] region:', err2.message)
-        else if (editForm.region !== (userDetails?.region || '')) savedFields.push('region')
-      }
-
-      // Step 3: phone (silent if column missing)
+      // Step 2: phone (silent — column may or may not exist)
       if (editForm.phone !== undefined) {
-        const { error: err3 } = await supabase.from('profiles').update({ phone: editForm.phone || null }).eq('id', user.id)
-        if (err3) console.warn('[saveProfileEdit] phone:', err3.message)
+        const { error: err2 } = await supabase.from('profiles').update({ phone: editForm.phone || null }).eq('id', user.id)
+        if (err2) console.warn('[saveProfileEdit] phone:', err2.message)
         else if (editForm.phone !== (userDetails?.phone || '')) savedFields.push('phone')
       }
 
@@ -906,7 +898,10 @@ export function UserDetailView({ user, isOpen, onClose, onUserUpdated, theme, ad
                     <select defaultValue="" onChange={e => { if (e.target.value) { changeTier(e.target.value); e.target.value = '' } }}
                       style={{ flex: 1, padding: '9px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, background: C.bg, color: C.text, cursor: 'pointer', minWidth: 140 }}>
                       <option value="" disabled>Change Tier...</option>
-                      {Object.entries(TIERS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+                      <option value="free">Free</option>
+                      <option value="basic">Basic</option>
+                      <option value="plus">Plus</option>
+                      <option value="premium">Premium</option>
                     </select>
                     <button onClick={pauseAccount} style={{ padding: '9px 14px', background: '#FEF3C7', color: '#92400E', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Pause 30d</button>
                   </div>

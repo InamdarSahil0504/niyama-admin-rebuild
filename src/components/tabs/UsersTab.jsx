@@ -48,48 +48,45 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
     setLoading(true)
     try {
       const sevenAgoDate = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0]
+      const SELECT_COLS = 'id, full_name, email, tier, subscription_status, pause_active, deleted, gender, created_at, last_active_date, monthly_points, successful_days, is_minor, research_consent'
+      const sortColDB = { monthly_points: 'monthly_points', successful_days: 'successful_days', last_active_date: 'last_active_date', created_at: 'created_at', full_name: 'full_name', tier: 'tier' }[sortCol] || sortCol
 
-      let query = supabase.from('profiles').select(
-        'id, full_name, email, tier, subscription_status, pause_active, deleted, gender, created_at, last_active_date, monthly_points, successful_days, is_minor, research_consent',
-        { count: 'exact' }
-      )
+      if (statusFilter === 'inactive') {
+        // Inactive: fetch all non-deleted/non-paused then filter client-side
+        // (.or with null check is unreliable in some PostgREST versions)
+        let q = supabase.from('profiles').select(SELECT_COLS)
+          .neq('deleted', true)
+          .neq('pause_active', true)
+        if (search) q = q.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
+        if (tierFilter !== 'all') q = q.eq('tier', tierFilter)
+        if (genderFilter !== 'all') q = q.eq('gender', genderFilter)
+        q = q.order(sortColDB, { ascending: sortDir === 'asc' })
 
-      // Search — DB level
+        const { data: allData, error } = await q
+        if (error) throw error
+        const filtered = (allData || []).filter(u => !u.last_active_date || u.last_active_date < sevenAgoDate)
+        setTotalCount(filtered.length)
+        setUsers(filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE))
+        return
+      }
+
+      // All other status filters — paginated DB query
+      let query = supabase.from('profiles').select(SELECT_COLS, { count: 'exact' })
+
       if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
-
-      // Tier filter
       if (tierFilter !== 'all') query = query.eq('tier', tierFilter)
-
-      // Gender filter
+      // Gender: DB stores 'Male' / 'Female' with capital first letter
       if (genderFilter !== 'all') query = query.eq('gender', genderFilter)
 
-      // Status filter — use .neq(col, true) so NULL rows are also included
-      // (Supabase: .eq('deleted', false) excludes NULL rows; .neq('deleted', true) matches false AND null)
       if (statusFilter === 'active') {
-        query = query
-          .neq('deleted', true)
-          .neq('pause_active', true)
-          .gte('last_active_date', sevenAgoDate)
-      } else if (statusFilter === 'inactive') {
-        query = query
-          .neq('deleted', true)
-          .neq('pause_active', true)
-          .or(`last_active_date.lt.${sevenAgoDate},last_active_date.is.null`)
+        // neq handles null rows (null != true)
+        query = query.neq('deleted', true).neq('pause_active', true).gte('last_active_date', sevenAgoDate)
       } else if (statusFilter === 'paused') {
         query = query.eq('pause_active', true)
       } else if (statusFilter === 'deleted') {
         query = query.eq('deleted', true)
       }
 
-      // Sort
-      const sortColDB = {
-        monthly_points: 'monthly_points',
-        successful_days: 'successful_days',
-        last_active_date: 'last_active_date',
-        created_at: 'created_at',
-        full_name: 'full_name',
-        tier: 'tier'
-      }[sortCol] || sortCol
       query = query.order(sortColDB, { ascending: sortDir === 'asc' })
       query = query.range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
 
@@ -205,9 +202,13 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
           placeholder="Search name or email..."
           style={{ ...inputStyle, minWidth: 220 }}
         />
+        {/* Tier filter — values match actual DB: 'free', 'basic', 'plus', 'premium' */}
         <select value={tierFilter} onChange={e => { setTierFilter(e.target.value); setPage(1) }} style={selectStyle}>
           <option value="all">All Tiers</option>
-          {Object.entries(TIERS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+          <option value="free">Free</option>
+          <option value="basic">Basic</option>
+          <option value="plus">Plus</option>
+          <option value="premium">Premium</option>
         </select>
         <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1) }} style={selectStyle}>
           <option value="all">All Status</option>
@@ -216,11 +217,11 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
           <option value="paused">Paused</option>
           <option value="deleted">Deleted</option>
         </select>
+        {/* Gender filter — DB stores 'Male' / 'Female' (capital first letter) */}
         <select value={genderFilter} onChange={e => { setGenderFilter(e.target.value); setPage(1) }} style={selectStyle}>
           <option value="all">All Genders</option>
-          <option value="male">Male</option>
-          <option value="female">Female</option>
-          <option value="other">Other</option>
+          <option value="Male">Male</option>
+          <option value="Female">Female</option>
         </select>
       </div>
 
@@ -230,7 +231,10 @@ export default function UsersTab({ theme, addToast, onSelectUser, logAdminAction
           <span style={{ fontSize: 13, fontWeight: 600, color: '#1D4ED8' }}>{selected.size} selected</span>
           <select value={bulkTier} onChange={e => setBulkTier(e.target.value)} style={{ ...selectStyle, background: '#fff' }}>
             <option value="">Change Tier...</option>
-            {Object.entries(TIERS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+            <option value="free">Free</option>
+            <option value="basic">Basic</option>
+            <option value="plus">Plus</option>
+            <option value="premium">Premium</option>
           </select>
           {bulkTier && <button onClick={bulkChangeTier} style={{ padding: '8px 14px', background: '#4A7A68', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Apply</button>}
           <button onClick={exportCSV} style={{ padding: '8px 14px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#374151' }}>Export CSV</button>
